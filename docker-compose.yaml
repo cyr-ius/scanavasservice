@@ -43,16 +43,9 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      MINIO_NOTIFY_WEBHOOK_ENABLE_SCANS: "on"
-      MINIO_NOTIFY_WEBHOOK_ENDPOINT_SCANS: http://fastpi:8000/test/webhook
-      MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_SCANS: ""
-      MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_SCANS: "/data/queue"
-      MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT_SCANS: 10000
       MINIO_NOTIFY_KAFKA_ENABLE_SCANS: "on"
       MINIO_NOTIFY_KAFKA_BROKERS_SCANS: kafka:9092
       MINIO_NOTIFY_KAFKA_TOPIC_SCANS: "files_to_scan"
-      MINIO_NOTIFY_KAFKA_QUEUE_DIR_SCANS: "/data/queue"
-      MINIO_NOTIFY_KAFKA_QUEUE_LIMIT_SCANS: 10000
     command: server /data
     volumes:
       - minio_data:/data
@@ -75,8 +68,7 @@ services:
       sleep 10 &&
       mc alias set local http://minio:9000 minioadmin minioadmin &&
       mc mb -p local/scans || echo 'Bucket files already exists' &&
-      mc event add local/scans arn:minio:sqs::SCANS:webhook || echo 'Webhook already binding' &&
-      mc event add local/scans arn:minio:sqs::SCANS:kafka || echo 'Kafka already binding'
+      mc event add local/scans arn:minio:sqs::SCANS:kafka --event "put" || echo 'Kafka already binding'
       "
 
   scanner:

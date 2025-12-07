@@ -5,11 +5,9 @@ import functools
 import logging
 import random
 from collections.abc import Callable
-from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from exception import TimeoutExceededError
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -88,22 +86,3 @@ def retry(
         return newfn
 
     return decorator
-
-
-class MessageBase(BaseModel):
-    key: str
-    status: Literal["ERROR", "PENDING", "CLEAN", "INFECTED", "UNREACHABLE"]
-    timestamp: datetime = datetime.now()
-    bucket: str | None = None
-    orginal_filename: str | None = None
-
-
-class ClamAVResult(MessageBase):
-    instance: str | None = None
-    virus: str | None = None
-    analyse: float | None = None
-
-
-class ScanResult(ClamAVResult, MessageBase):
-    duration: float | None = None
-    worker: str | None = None

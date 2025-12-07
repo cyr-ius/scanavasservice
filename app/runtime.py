@@ -23,7 +23,8 @@ from const import (
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
 )
-from helpers import ClamAVResult, ScanResult, retry
+from helpers import retry
+from models import ClamAVResult, ScanResult
 from monitor import Monitor
 from mylogging import mylogging
 from storage import (
@@ -56,7 +57,12 @@ def fire_and_forget(coro: Awaitable[None]):
 
 # ----------------- WORKER -----------------
 @retry(
-    exceptions=(S3LockException, S3MoveException, ClamAVFailedAll),
+    exceptions=(
+        S3BucketKeyException,
+        S3LockException,
+        S3MoveException,
+        ClamAVFailedAll,
+    ),
     tries=RETRY,
     delay=BASE_DELAY,
 )
@@ -64,90 +70,81 @@ async def worker(
     worker_id: str,
     storage: S3Storage,
     monitor: Monitor,
-    payload: Dict[str, Any],
+    record: Dict[str, Any],
     producer: AIOKafkaProducer,
 ) -> None:
     """Worker that selects the best host adaptively, performs scan, updates stats and moves object."""
     async with scan_semaphore:
-        try:
-            logger.info(f"[worker-{worker_id}] Start scan.")
-            start_time = time.monotonic()
+        logger.info(f"[worker-{worker_id}] Start scan.")
+        start_time = time.monotonic()
 
-            # Extract object key, bucket and metadata
+        # Extract object key, bucket and metadata
+        key, bucket = storage.get_bucket_key(record)
+
+        # Set status to PENDING
+        await storage.async_set_s3_tags(key, bucket, {"status": "PENDING"})
+
+        attempt = 0
+        last_exception = None
+
+        while attempt < RETRY:
+            attempt += 1
+            host, port, host_key = await monitor.select_best_host()
+            await monitor.mark_host_busy(host_key)
+            scan_start = time.monotonic()
+
             try:
-                key, bucket, metadata = storage.bucket_key(payload)
-            except S3BucketKeyException as e:
-                logger.error(f"[worker-{worker_id}] bucket/key not found: {e}")
-                return
-
-            metadata = metadata or {}
-
-            attempt = 0
-            last_exception = None
-
-            while attempt < RETRY:
-                attempt += 1
-                host, port, host_key = await monitor.select_best_host()
-                await monitor.mark_host_busy(host_key)
-                scan_start = time.monotonic()
-
-                try:
-                    scan = await storage.scan_s3_object_async(key, bucket, host, port)
-                except ClamAVException as e:
-                    await monitor.mark_host_done(host_key, elapsed=None, success=False)
-                    last_exception = e
-                    logger.warning(
-                        f"[worker-{worker_id}] ClamAV attempt failed on {host_key}: {e} (attempt {attempt})"
-                    )
-                    await asyncio.sleep(BASE_DELAY * (2 ** (attempt - 1)))
-                    continue
-                else:
-                    elapsed = time.monotonic() - scan_start
-                    await monitor.mark_host_done(
-                        host_key, elapsed=elapsed, success=True
-                    )
-                    break
+                scan = await storage.async_scan_s3_object(key, bucket, host, port)
+            except ClamAVException as e:
+                await monitor.mark_host_done(host_key, elapsed=None, success=False)
+                last_exception = e
+                logger.warning(
+                    f"[worker-{worker_id}] ClamAV attempt failed on {host_key}: {e} (attempt {attempt})"
+                )
+                await asyncio.sleep(BASE_DELAY * (2 ** (attempt - 1)))
+                continue
             else:
-                logger.error(
-                    f"[worker-{worker_id}] All CLAMD attempts failed for {key}: {last_exception}"
-                )
-                raise ClamAVFailedAll(last_exception)
-
-            # Move object based on scan result
-            target = (
-                f"{S3_SCAN_RESULT}/{key}"
-                if scan.status == "CLEAN"
-                else f"{S3_SCAN_QUARANTINE}/{key}"
+                elapsed = time.monotonic() - scan_start
+                await monitor.mark_host_done(host_key, elapsed=elapsed, success=True)
+                break
+        else:
+            logger.error(
+                f"[worker-{worker_id}] All CLAMD attempts failed for {key}: {last_exception}"
             )
+            raise ClamAVFailedAll(last_exception)
 
-            duration = time.monotonic() - start_time
-            scan = scan or ClamAVResult()
-            result = ScanResult(
-                bucet=bucket, worker=worker_id, duration=duration, **scan.model_dump()
-            )
-            await storage.move_s3_object_async(key, bucket, target, result)
-            logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
+        # Move object based on scan result
+        target = (
+            f"{S3_SCAN_RESULT}/{key}"
+            if scan.status == "CLEAN"
+            else f"{S3_SCAN_QUARANTINE}/{key}"
+        )
 
-        finally:
-            await producer.send_and_wait(
-                KAFKA_TOPIC, value=result.model_dump_json().encode("utf-8")
-            )
-            await producer.send_and_wait(
-                KAFKAT_STATS,
-                value=json.dumps(
-                    {**storage.statistics, "monitor": monitor.statistics}
-                ).encode("utf-8"),
-            )
+        duration = time.monotonic() - start_time
+        scan = scan or ClamAVResult()
+        result = ScanResult(worker=worker_id, duration=duration, **scan.model_dump())
+        await storage.async_move_s3_object(key, bucket, target, result)
+        logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
 
-            # Fire webhook if present
-            if (
-                metadata
-                and (url := metadata.get("X-Amz-Meta-Webhook"))
-                and scan is not None
-            ):
-                fire_and_forget(
-                    storage.call_webhook_and_remove(key, url, result.model_dump_json())
-                )
+        await producer.send_and_wait(
+            KAFKA_TOPIC, value=result.model_dump_json().encode("utf-8")
+        )
+        await producer.send_and_wait(
+            KAFKAT_STATS,
+            value=json.dumps(
+                {**storage.statistics, "monitor": monitor.statistics}
+            ).encode("utf-8"),
+        )
+
+        # Fire webhook if present
+        if (
+            (metadata := await storage.async_get_s3_metadata(target, bucket))
+            and (url := metadata.get("webhook"))
+            and scan is not None
+        ):
+            fire_and_forget(
+                storage.async_call_webhook(target, url, result.model_dump_json())
+            )
 
 
 # ----------------- CONSUMER -----------------
@@ -167,11 +164,13 @@ async def consume_loop(
                 continue
             payload = json.loads(msg.value.decode("utf-8"))
             logger.debug("Kafka payload: %s", payload)
-            if (key := payload.get("Key")) and payload.get(
-                "EventName"
-            ) == "s3:ObjectCreated:Put":
-                # Use key as worker_id
-                asyncio.create_task(worker(key, storage, monitor, payload, producer))
+            if (
+                "Records" in payload
+                and payload.get("EventName") == "s3:ObjectCreated:Put"
+            ):
+                for record in payload["Records"]:
+                    key = record["s3"]["object"]["key"]
+                    asyncio.create_task(worker(key, storage, monitor, record, producer))
     finally:
         await consumer.stop()
 
@@ -181,10 +180,10 @@ async def periodic_cleanup_task(storage: S3Storage) -> None:
     """Run cleanup periodically."""
     while True:
         try:
-            await storage.cleanup_s3_folder(
+            await storage.async_cleanup_s3_folder(
                 S3_BUCKET, S3_SCAN_QUARANTINE, older_than_ms=KAFKA_LOG_RETENTION_MS
             )
-            await storage.cleanup_s3_folder(
+            await storage.async_cleanup_s3_folder(
                 S3_BUCKET, S3_SCAN_RESULT, older_than_ms=KAFKA_LOG_RETENTION_MS
             )
         except Exception as e:

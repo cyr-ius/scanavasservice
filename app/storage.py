@@ -7,7 +7,8 @@ from typing import Any
 from aiobotocore.session import ClientCreatorContext, get_session
 from aiohttp import ClientSession
 from const import BASE_DELAY, RETRY
-from helpers import ClamAVResult, ScanResult, retry
+from helpers import retry
+from models import ClamAVResult, ScanResult
 from mylogging import mylogging
 
 logger = mylogging.getLogger("storage")
@@ -42,29 +43,35 @@ class S3Storage:
             aws_secret_access_key=self.secret,
         )
 
-    async def move_s3_object_async(
+    async def async_move_s3_object(
         self, key: str, bucket: str, target: str, result: ScanResult | None = None
     ) -> None:
         """Move or copy an object within S3 bucket."""
 
         logger.debug("Moving %s/%s to %s", bucket, key, target)
-        tagging = f"worker={result.worker}&duration={result.duration}&status={result.status}&virus={result.virus}&analyse={result.analyse}&instance={result.instance}"
         async with await self._get_s3_client() as s3_client:
             try:
                 # Get headers and merge with new metada because copy_object
                 # lost old metadata on file
                 await s3_client.copy_object(
-                    Bucket=bucket,
-                    Key=target,
-                    CopySource={"Bucket": bucket, "Key": key},
-                    Tagging=tagging,
-                    TaggingDirective="REPLACE",
+                    Bucket=bucket, Key=target, CopySource={"Bucket": bucket, "Key": key}
                 )  # type: ignore
                 await s3_client.delete_object(Bucket=bucket, Key=key)  # type: ignore
+                # Set tags
+                tags = {
+                    "timestamp": str(result.timestamp),
+                    "duration": round(result.duration, 3),
+                    "status": result.status,
+                    "virus": result.virus or "",
+                    "analyse": result.analyse,
+                    "instance": result.instance,
+                }
+                await self.async_set_s3_tags(target, bucket, tags)
+
             except Exception as e:
                 raise S3MoveException(f"s3-move-error:{e}") from e
 
-    async def cleanup_s3_folder(
+    async def async_cleanup_s3_folder(
         self, bucket: str, prefix: str, older_than_ms: int
     ) -> None:
         """Delete S3 objects in `bucket/prefix` older than `older_than_ms`."""
@@ -84,7 +91,7 @@ class S3Storage:
                         except Exception as e:
                             logger.exception(f"Failed to delete {bucket}/{key}: {e}")
 
-    async def scan_s3_object_async(
+    async def async_scan_s3_object(
         self, key: str, bucket: str, host: str, port: int
     ) -> ClamAVResult:
         """Scan a single S3 file using a specific CLAMD host via INSTREAM."""
@@ -130,6 +137,7 @@ class S3Storage:
                 self._statistics["cleaned"] += 1
                 return ClamAVResult(
                     key=key,
+                    bucket=bucket,
                     status="CLEAN",
                     instance=f"{host}:{port}",
                     analyse=round(elapsed, 3),
@@ -140,6 +148,7 @@ class S3Storage:
                 virus = response.split("FOUND")[0].split(":")[-1].strip()
                 return ClamAVResult(
                     key=key,
+                    bucket=bucket,
                     status="INFECTED",
                     virus=virus,
                     instance=f"{host}:{port}",
@@ -153,23 +162,45 @@ class S3Storage:
             raise ClamAVException(f"clamd-scan-error:{e}") from e
 
     @retry(tries=RETRY, delay=BASE_DELAY, logger=logger)
-    async def call_webhook_and_remove(self, key: str, url: str, payload: dict):
+    async def async_call_webhook(self, key: str, url: str, payload: dict):
         async with ClientSession(raise_for_status=True) as session:
             logger.info("Calling webhook %s", key)
             async with session.post(url, json=payload):
                 logger.info(f"Webhook {url} successfully called for file {key}")
 
-    def bucket_key(self, kafkat_payload: dict[str, Any]) -> tuple[str, str, str]:
-        """Return bucket, key, metadata from payload."""
-        if "Records" in kafkat_payload and len(kafkat_payload["Records"]) == 1:
-            record = kafkat_payload["Records"][0]
-            bucket = record.get("s3", {}).get("bucket", {}).get("name")
-            key = record.get("s3", {}).get("object", {}).get("key")
-            metadata = record.get("s3", {}).get("object", {}).get("userMetadata")
-            if bucket is not None and key is not None and metadata:
-                return key, bucket, metadata
+    async def async_get_s3_metadata(self, key: str, bucket: str) -> dict[str, Any]:
+        """Retrieve metadata."""
+        async with await self._get_s3_client() as s3_client:
+            obj = await s3_client.head_object(Key=key, Bucket=bucket)
+            return obj.get("Metadata", {})
 
-        raise S3BucketKeyException("Unable to determine the bucket and key")
+    async def async_get_s3_tags(self, key: str, bucket: str) -> dict[str, Any]:
+        """Return tags."""
+        async with await self._get_s3_client() as s3_client:
+            result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)
+            return result["TagSet"]
+
+    async def async_set_s3_tags(
+        self, key: str, bucket: str, tags: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return tags."""
+        async with await self._get_s3_client() as s3_client:
+            if len(tags) > 10:
+                raise S3StorageException("Too many tags exceeded (max:10)")
+            taggins = [{"Key": str(k), "Value": str(v)} for k, v in tags.items()]
+            await s3_client.put_object_tagging(
+                Key=key, Bucket=bucket, Tagging={"TagSet": taggins}
+            )
+
+    def get_bucket_key(self, record: dict[str, Any]) -> tuple[str, str]:
+        """Return bucket, key from payload."""
+        if "s3" in record:
+            bucket = record["s3"].get("bucket", {}).get("name")
+            key = record["s3"].get("object", {}).get("key")
+            if bucket and key:
+                return key, bucket
+
+        raise S3BucketKeyException("Unable to determine the bucket and object key.")
 
 
 class S3StorageException(Exception):
