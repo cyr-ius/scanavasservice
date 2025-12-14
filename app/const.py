@@ -38,9 +38,9 @@ EMA_ALPHA = float(
 
 
 # OIDC
-OIDC_ISSUER = os.getenv("OIDC_ISSUER", "https://login.ipocus.net/api/oidc")
-OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL", "https://login.ipocus.net/jwks.json")
+OIDC_ISSUER = os.getenv("OIDC_ISSUER")
+OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL")
 
-CLIENT_ID = os.getenv("CLIENT_ID", "client_id")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET", "secret")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 CLIENT_SCOPES = os.getenv("CLIENT_SCOPES", "openid,profile,email,groups").split(",")
