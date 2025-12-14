@@ -7,6 +7,9 @@ from aiobotocore.session import get_session
 from aiokafka import AIOKafkaConsumer
 from aiokafka.structs import TopicPartition
 from const import (
+    CLIENT_ID,
+    CLIENT_SCOPES,
+    CLIENT_SECRET,
     KAFKA_SERVERS,
     KAFKAT_STATS,
     S3_ACCESS_KEY,
@@ -17,7 +20,9 @@ from const import (
     S3_SECRET_KEY,
     VERSION,
 )
+from depends import protected
 from fastapi import FastAPI, HTTPException, UploadFile, status
+from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
 from models import BuckenContent, ScanResult, UploadResponse
 from mylogging import mylogging
@@ -48,10 +53,19 @@ async def s3_client_ctx():
             logger.debug("Error closing s3 client: %s", e)
 
 
-app = FastAPI(title="ScanAV as Service (SAVaS) - API", version=VERSION)
+app = FastAPI(
+    title="ScanAV as Service (SAVaS) - API",
+    version=VERSION,
+    swagger_ui_init_oauth={
+        "clientId": CLIENT_ID,
+        "clientSecret": CLIENT_SECRET,
+        "scopes": CLIENT_SCOPES,
+        "usePkceWithAuthorizationCodeGrant": False,
+    },
+)
 
 
-@app.post("/upload", status_code=status.HTTP_200_OK)
+@app.post("/upload", status_code=status.HTTP_200_OK, dependencies=[Depends(protected)])
 async def upload_file_to_scan(
     file: UploadFile, url: HttpUrl | None = None
 ) -> UploadResponse:
@@ -86,7 +100,7 @@ async def upload_file_to_scan(
     )
 
 
-@app.get("/download/{key}")
+@app.get("/download/{key}", dependencies=[Depends(protected)])
 async def download_scanned_file(key: str, force: bool = False) -> StreamingResponse:
     """Download scanned file by ID if clean or force is True."""
     result = await scan_status(key)
@@ -102,7 +116,7 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
     try:
         # Use s3_client_ctx
         async with s3_client_ctx() as s3_client:
-            obj_meta = await s3_client.head_object(Bucket=S3_BUCKET, Key=result.key)
+            obj_meta = await s3_client.head_object(Bucket=S3_BUCKET, Key=result.key)  # type: ignore
             filename = obj_meta.get("Metadata", {}).get(
                 "originalfilename", "unknown_name"
             )
@@ -122,7 +136,7 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
         )
 
 
-@app.get("/result/{key}", status_code=status.HTTP_200_OK)
+@app.get("/result/{key}", dependencies=[Depends(protected)])
 async def scan_status(key: str) -> ScanResult:
     """Fetch scan result by ID."""
 
@@ -132,12 +146,12 @@ async def scan_status(key: str) -> ScanResult:
             try:
                 obj = await s3_client.head_object(
                     Bucket=S3_BUCKET, Key=f"{prefix}/{key}"
-                )
+                )  # type: ignore
                 metadata = obj.get("Metadata", {})
                 if obj.get("TagCount"):
                     obj_tags = await s3_client.get_object_tagging(
                         Bucket=S3_BUCKET, Key=f"{prefix}/{key}"
-                    )
+                    )  # type: ignore
                     tags = {t["Key"]: t["Value"] for t in obj_tags.get("TagSet", [])}
                 return ScanResult(
                     key=f"{prefix}/{key}",
@@ -149,13 +163,14 @@ async def scan_status(key: str) -> ScanResult:
             except Exception:
                 continue
         try:
-            if await s3_client.head_object(Bucket=S3_BUCKET, Key=key):
+            if await s3_client.head_object(Bucket=S3_BUCKET, Key=key):  # type: ignore
                 return ScanResult(key=key, bucket=S3_BUCKET, status="PENDING")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.exception("Download error (%s)", e)
+            logger.exception("Status error (%s)", e)
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"File not found or storage unavailable ({e})",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Status exception ({e})",
             )
 
 
@@ -165,7 +180,7 @@ async def hearbeat():
     pass
 
 
-@app.get("/clamav/monitor", status_code=status.HTTP_200_OK)
+@app.get("/clamav/monitor", dependencies=[Depends(protected)])
 async def clamav_monitor():
     """Monitor loadbalancing."""
     try:
@@ -179,23 +194,23 @@ async def clamav_monitor():
         return msg
 
 
-@app.get("/bucket/status", status_code=status.HTTP_200_OK)
+@app.get("/bucket/status", dependencies=[Depends(protected)])
 async def bucket_status() -> list[BuckenContent]:
     """Monitor loadbalancing."""
     result = []
     try:
         async with s3_client_ctx() as s3_client:
             paginator = s3_client.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=S3_BUCKET):
+            async for page in paginator.paginate(Bucket=S3_BUCKET):  # type: ignore
                 for obj in page.get("Contents", []):
                     obj = {str(k).lower(): v for k, v in obj.items()}
                     key = obj["key"]
-                    metadata = (await s3_client.head_object(Bucket=S3_BUCKET, Key=key))[
+                    metadata = (await s3_client.head_object(Bucket=S3_BUCKET, Key=key))[  # type: ignore
                         "Metadata"
                     ]
                     tagset = await s3_client.get_object_tagging(
                         Bucket=S3_BUCKET, Key=key
-                    )
+                    )  # type: ignore
                     tags = {t["Key"]: t["Value"] for t in tagset["TagSet"]}
                     result.append(
                         BuckenContent(bucket=S3_BUCKET, **obj, **metadata, **tags)

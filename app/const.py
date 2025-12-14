@@ -35,3 +35,12 @@ COOLDOWN_SECONDS = float(os.getenv("COOLDOWN_SECONDS", 60))  # cooldown duration
 EMA_ALPHA = float(
     os.getenv("EMA_ALPHA", 0.2)
 )  # exponential moving average alpha for avg times
+
+
+# OIDC
+OIDC_ISSUER = os.getenv("OIDC_ISSUER", "https://login.ipocus.net/api/oidc")
+OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL", "https://login.ipocus.net/jwks.json")
+
+CLIENT_ID = os.getenv("CLIENT_ID", "client_id")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET", "secret")
+CLIENT_SCOPES = os.getenv("CLIENT_SCOPES", "openid,profile,email,groups").split(",")
