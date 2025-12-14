@@ -44,7 +44,7 @@ class S3Storage:
         )
 
     async def async_move_s3_object(
-        self, key: str, bucket: str, target: str, result: ScanResult | None = None
+        self, key: str, bucket: str, target: str, result: ScanResult
     ) -> None:
         """Move or copy an object within S3 bucket."""
 
@@ -60,7 +60,7 @@ class S3Storage:
                 # Set tags
                 tags = {
                     "timestamp": str(result.timestamp),
-                    "duration": round(result.duration, 3),
+                    "duration": round(result.duration, 3) if result.duration else 0.0,
                     "status": result.status,
                     "virus": result.virus or "",
                     "analyse": result.analyse,
@@ -171,18 +171,18 @@ class S3Storage:
     async def async_get_s3_metadata(self, key: str, bucket: str) -> dict[str, Any]:
         """Retrieve metadata."""
         async with await self._get_s3_client() as s3_client:
-            obj = await s3_client.head_object(Key=key, Bucket=bucket)
+            obj = await s3_client.head_object(Key=key, Bucket=bucket)  # type: ignore
             return obj.get("Metadata", {})
 
     async def async_get_s3_tags(self, key: str, bucket: str) -> dict[str, Any]:
         """Return tags."""
         async with await self._get_s3_client() as s3_client:
-            result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)
+            result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)  # type: ignore
             return result["TagSet"]
 
     async def async_set_s3_tags(
         self, key: str, bucket: str, tags: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> None:
         """Return tags."""
         async with await self._get_s3_client() as s3_client:
             if len(tags) > 10:
@@ -190,7 +190,7 @@ class S3Storage:
             taggins = [{"Key": str(k), "Value": str(v)} for k, v in tags.items()]
             await s3_client.put_object_tagging(
                 Key=key, Bucket=bucket, Tagging={"TagSet": taggins}
-            )
+            )  # type: ignore
 
     def get_bucket_key(self, record: dict[str, Any]) -> tuple[str, str]:
         """Return bucket, key from payload."""
