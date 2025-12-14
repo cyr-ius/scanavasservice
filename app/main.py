@@ -21,7 +21,7 @@ from const import (
     VERSION,
 )
 from depends import protected
-from fastapi import FastAPI, HTTPException, UploadFile, status
+from fastapi import APIRouter, FastAPI, HTTPException, UploadFile, status
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
 from models import BuckenContent, ScanResult, UploadResponse
@@ -55,6 +55,8 @@ async def s3_client_ctx():
 
 app = FastAPI(
     title="ScanAV as Service (SAVaS) - API",
+    description="This API allows you to submit a file to a ClamAV antivirus engine and retrieve the result.",
+    root_path="/api",
     version=VERSION,
     swagger_ui_init_oauth={
         "clientId": CLIENT_ID,
@@ -64,8 +66,10 @@ app = FastAPI(
     },
 )
 
+v1_router = APIRouter(prefix="/v1")
 
-@app.post("/upload", status_code=status.HTTP_200_OK, dependencies=[Depends(protected)])
+
+@v1_router.post("/upload", dependencies=[Depends(protected)], tags=["av"])
 async def upload_file_to_scan(
     file: UploadFile, url: HttpUrl | None = None
 ) -> UploadResponse:
@@ -100,7 +104,7 @@ async def upload_file_to_scan(
     )
 
 
-@app.get("/download/{key}", dependencies=[Depends(protected)])
+@v1_router.get("/download/{key}", dependencies=[Depends(protected)], tags=["av"])
 async def download_scanned_file(key: str, force: bool = False) -> StreamingResponse:
     """Download scanned file by ID if clean or force is True."""
     result = await scan_status(key)
@@ -136,7 +140,7 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
         )
 
 
-@app.get("/result/{key}", dependencies=[Depends(protected)])
+@v1_router.get("/status/{key}", dependencies=[Depends(protected)], tags=["av"])
 async def scan_status(key: str) -> ScanResult:
     """Fetch scan result by ID."""
 
@@ -174,13 +178,13 @@ async def scan_status(key: str) -> ScanResult:
             )
 
 
-@app.get("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+@v1_router.get("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
 async def hearbeat():
     """Hearbeat url."""
     pass
 
 
-@app.get("/clamav/monitor", dependencies=[Depends(protected)])
+@v1_router.get("/monitor/clamav", dependencies=[Depends(protected)])
 async def clamav_monitor():
     """Monitor loadbalancing."""
     try:
@@ -194,7 +198,7 @@ async def clamav_monitor():
         return msg
 
 
-@app.get("/bucket/status", dependencies=[Depends(protected)])
+@v1_router.get("/monitor/bucket", dependencies=[Depends(protected)])
 async def bucket_status() -> list[BuckenContent]:
     """Monitor loadbalancing."""
     result = []
@@ -272,3 +276,6 @@ async def get_last_message() -> dict | None:
 
     await consumer.stop()
     return last_messages[-1] if last_messages else None
+
+
+app.include_router(v1_router)
