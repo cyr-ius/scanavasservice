@@ -121,7 +121,7 @@ async def worker(
         )
 
         duration = time.monotonic() - start_time
-        scan = scan or ClamAVResult()
+        scan = scan or ClamAVResult(key=key, bucket=bucket, status="PENDING")
         result = ScanResult(worker=worker_id, duration=duration, **scan.model_dump())
         await storage.async_move_s3_object(key, bucket, target, result)
         logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
