@@ -87,6 +87,10 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       S3_SECRET_KEY: minioadmin
       MAX_CONCURRENT_SCANS: 8
+      CLIENT_ID: test_swagger
+      CLIENT_SECRET: secret
+      OIDC_ISSUER: https://login.ipocus.net/api/oidc
+      OIDC_JWKS_URL: https://login.ipocus.net/jwks.json
     tty: true
     stdin_open: true
     ports:
