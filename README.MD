@@ -29,7 +29,7 @@ Quelque soit la méthode , le bucket S3 doit être en capacité d'émettre des �
   - async_get_s3_tags, récupère les tags d'un fichier
   - async_set_s3_tags, valorise des tags sur un fichier
 - app/mylogging.py : class qui met en forme les logs et les traces
-- app/monitor.py : ckass qui permet de surveillance les différents moteur ClamAV , de calculer des statistiques afin d'envoyer le fichier au moteur ClamAv le plus efficient.
+- app/monitor.py : class qui permet de surveiller les différents moteur ClamAV , de calculer des statistiques afin d'envoyer le fichier au moteur ClamAv le plus efficient.
   - select_best_host, cette méthode permet de renvoyer le nom de l'instance ClamAV le plus performante.
   - reset_host_failures_periodically, cette  méthode permet de rénitialiser les statistiques de tous les moteurs
 - models.py :  model pydantics pour s'assure que les dictionnaires et les objets sont conformes
