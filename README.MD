@@ -5,9 +5,44 @@ Le moteur ClamAV sert d'antivirus. Kafka sert de bus de messages pour ordonner l
 
 ## Contenu principal du dossier app
 
-- app/main.py : point d'entrée du scanner (consommateur Kafka). Lit les variables d'environnement et démarre la boucle de traitement.
-- app/scanner_multi.py : logique pour interroger plusieurs daemons ClamAV (CLAMD_HOSTS) avec round‑robin / retry.
-- app/helpers.py : utilitaires (S3, Kafka, parsing, logging).
+Le Runtime surveille la file Kafka et envoie à l'analyse ClamAV les fichiers , il est autonome
+il peut être lancer par la commande : ``` python runtime.py ```
+
+L'API permet de soumettre des ficheirs via Rest API , elle est facultative. 
+elle est lancé via la  commande : ``` uvicorn main:app --host 0.0.0.0 --port 80 ```
+
+Il existe deux façon de soumettre un ifchier à l'analyse:
+ - soit en déposer le fichier dans le bucket
+ - soit par upload du fichier via l'api Rest
+
+Quelque soit la méthode , le bucket S3 doit être en capacité d'émettre des évènements vers une file Kafka quand le fichier est déposé dans le bucket.
+
+### Moteur d'analyse
+
+- app/runtime.py : point d'entrée du scanner (consommateur Kafka). Lit les variables d'environnement et démarre la boucle de traitement.
+- app/storage.py : class qui permet de manipuler les données au sein du stockage S3 , 
+  - async_move_s3_object , deplace un fichier
+  - async_cleanup_s3_folder, nettoie un bucket ou une répertoire
+  - async_scan_s3_object, passe le fichier à l'antivirus
+  - async_call_webhook, appel un webhook
+  - async_get_s3_metadata, récupère les métadata d'un fichier
+  - async_get_s3_tags, récupère les tags d'un fichier
+  - async_set_s3_tags, valorise des tags sur un fichier
+- app/mylogging.py : class qui met en forme les logs et les traces
+- app/monitor.py : ckass qui permet de surveillance les différents moteur ClamAV , de calculer des statistiques afin d'envoyer le fichier au moteur ClamAv le plus efficient.
+  - select_best_host, cette méthode permet de renvoyer le nom de l'instance ClamAV le plus performante.
+  - reset_host_failures_periodically, cette  méthode permet de rénitialiser les statistiques de tous les moteurs
+- models.py :  model pydantics pour s'assure que les dictionnaires et les objets sont conformes
+- app/helpers.py :  function utilitaires (parsing, retrying).
+- app/exceptions: exceptions du programme ScanAVasService
+
+### API de gestion
+
+- app/main.py: API permettant l'ajout , la récupération  d'un fichier scanné. L' API permet aussi d'obtenir le status d'un fichier. L'api permet aussi d'obtenir les statistiques des moteurs ClamAV , ainsi qu'un état de situation des buckets.
+- app/depends: Associété au main.py , il permet de gérer les jetons oAuth d'un Idp tiers et/ou l'accès l'api via un ClientId/ClientSecret
+
+### Endpoint docker
+
 - app/wait_and_start.sh : script utilitaire pour attendre que des services (Kafka, MinIO, ClamAV...) soient disponibles avant de démarrer le scanner.
 
 ## Variables d'environnement importantes
