@@ -12,7 +12,7 @@ L'API permet de soumettre des ficheirs via Rest API , elle est facultative.
 elle est lancé via la  commande : ``` uvicorn main:app --host 0.0.0.0 --port 80 ```
 
 Il existe deux façon de soumettre un ifchier à l'analyse:
- - soit en déposer le fichier dans le bucket
+ - soit en déposant le fichier dans le bucket
  - soit par upload du fichier via l'api Rest
 
 Quelque soit la méthode , le bucket S3 doit être en capacité d'émettre des évènements vers une file Kafka quand le fichier est déposé dans le bucket.
