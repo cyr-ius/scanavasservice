@@ -72,7 +72,7 @@ uvicorn main:app --host 0.0.0.0 --port "${FASTAPI_PORT}" &
 FASTAPI_PID=$!
 
 # Wait for FastAPI to be ready
-until curl -sSf "http://127.0.0.1:${FASTAPI_PORT}/docs" >/dev/null 2>&1; do
+until curl -sSf "http://127.0.0.1:${FASTAPI_PORT}/api/v1/heartbeat" >/dev/null 2>&1; do
   if (( SECONDS >= end )); then
     echo "Timeout waiting for FastAPI"
     kill "${FASTAPI_PID}" || true
