@@ -11,6 +11,10 @@ from const import (
     CLAMD_CNX_TIMEOUT,
     CLAMD_HOSTS,
     KAFKA_LOG_RETENTION_MS,
+    KAFKA_SASL_MECHANISM,
+    KAFKA_SASL_PASSWORD,
+    KAFKA_SASL_USERNAME,
+    KAFKA_SECURITY_PROTOCOL,
     KAFKA_SERVERS,
     KAFKA_TOPIC,
     KAFKAT_STATS,
@@ -116,7 +120,7 @@ async def worker(
         # Move object based on scan result
         target = (
             f"{S3_SCAN_RESULT}/{key}"
-            if scan.status == "CLEAN"
+            if scan.status in ["CLEAN", "ERROR"]
             else f"{S3_SCAN_QUARANTINE}/{key}"
         )
 
@@ -151,11 +155,27 @@ async def worker(
 async def consume_loop(
     producer: AIOKafkaProducer, storage: S3Storage, monitor: Monitor
 ):
+    if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
+        security_protocol = KAFKA_SECURITY_PROTOCOL
+        sasl_mechanism = KAFKA_SASL_MECHANISM
+        sasl_plain_username = KAFKA_SASL_USERNAME
+        sasl_plain_password = KAFKA_SASL_PASSWORD
+    else:
+        security_protocol = "PLAINTEXT"
+        sasl_mechanism = None
+        sasl_plain_username = None
+        sasl_plain_password = None
+
     consumer = AIOKafkaConsumer(
         KAFKA_TOPIC,
         bootstrap_servers=KAFKA_SERVERS,  # type: ignore
         group_id="scanner-group",
         enable_auto_commit=True,
+        security_protocol=security_protocol,
+        sasl_mechanism=sasl_mechanism,  # type: ignore
+        sasl_plain_username=sasl_plain_username,
+        sasl_plain_password=sasl_plain_password,
+        auto_offset_reset="latest",
     )
     await consumer.start()
     try:
@@ -164,13 +184,13 @@ async def consume_loop(
                 continue
             payload = json.loads(msg.value.decode("utf-8"))
             logger.debug("Kafka payload: %s", payload)
-            if (
-                "Records" in payload
-                and payload.get("EventName") == "s3:ObjectCreated:Put"
-            ):
-                for record in payload["Records"]:
-                    key = record["s3"]["object"]["key"]
-                    asyncio.create_task(worker(key, storage, monitor, record, producer))
+            for record in payload.get("Records", []):
+                if record.get("eventName") == "s3:ObjectCreated:Put":
+                    logger.debug("New S3 object to scan detected.")
+                    if key := record.get("s3", {}).get("object", {}).get("key"):
+                        asyncio.create_task(
+                            worker(key, storage, monitor, record, producer)
+                        )
     finally:
         await consumer.stop()
 
@@ -201,7 +221,24 @@ async def main():
         CLAMD_CNX_TIMEOUT,
     )
 
-    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_SERVERS)  # type: ignore
+    if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
+        security_protocol = KAFKA_SECURITY_PROTOCOL
+        sasl_mechanism = KAFKA_SASL_MECHANISM
+        sasl_plain_username = KAFKA_SASL_USERNAME
+        sasl_plain_password = KAFKA_SASL_PASSWORD
+    else:
+        security_protocol = "PLAINTEXT"
+        sasl_mechanism = None
+        sasl_plain_username = None
+        sasl_plain_password = None
+
+    producer = AIOKafkaProducer(
+        bootstrap_servers=KAFKA_SERVERS,  # type: ignore
+        security_protocol=security_protocol,
+        sasl_mechanism=sasl_mechanism,  # type: ignore
+        sasl_plain_username=sasl_plain_username,
+        sasl_plain_password=sasl_plain_password,
+    )
     await producer.start()
 
     asyncio.create_task(monitor.reset_host_failures_periodically())

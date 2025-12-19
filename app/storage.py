@@ -6,7 +6,7 @@ from typing import Any
 
 from aiobotocore.session import ClientCreatorContext, get_session
 from aiohttp import ClientSession
-from const import BASE_DELAY, RETRY
+from const import BASE_DELAY, MAX_CHUNK_SIZE, RETRY
 from helpers import retry
 from models import ClamAVResult, ScanResult
 from mylogging import mylogging
@@ -62,7 +62,7 @@ class S3Storage:
                     "timestamp": str(result.timestamp),
                     "duration": round(result.duration, 3) if result.duration else 0.0,
                     "status": result.status,
-                    "virus": result.virus or "",
+                    "infos": result.infos or "",
                     "analyse": result.analyse,
                     "instance": result.instance,
                 }
@@ -102,34 +102,65 @@ class S3Storage:
         # fetch S3 stream (fresh for each attempt)
         async with await self._get_s3_client() as s3_client:
             try:
+                logger.debug("Fetching S3 object %s/%s", bucket, key)
                 resp = await s3_client.get_object(Bucket=bucket, Key=key)  # type: ignore
                 body = resp["Body"]
+
             except Exception as e:
                 raise S3GetObjectException(f"s3-get-error:{e}") from e
+            try:
+                logger.debug("Connecting to clamd %s:%d", host, port)
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=float(self._clamd_timeout),
+                )
+            except Exception as e:
+                raise ClamAVException(f"clamd-conn-error:{e}") from e
 
-        try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=float(self._clamd_timeout)
-            )
-
-            writer.write(b"zINSTREAM\0")
-            await writer.drain()
-
-            async for chunk in body.iter_chunks():
-                if not chunk:
-                    break
-                writer.write(len(chunk).to_bytes(4, "big") + chunk)
+            try:
+                writer.write(b"nINSTREAM\n")
                 await writer.drain()
 
-            writer.write(b"\x00\x00\x00\x00")
-            await writer.drain()
+                async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    writer.write(len(chunk).to_bytes(4, "big") + chunk)
+                    await writer.drain()
 
-            resp_bytes = await asyncio.wait_for(reader.read(4096), timeout=5)
-            response = resp_bytes.decode(errors="ignore").strip()
+                writer.write((0).to_bytes(4, "big"))
+                await writer.drain()
 
-            writer.close()
-            await writer.wait_closed()
+                resp_bytes = await asyncio.wait_for(reader.read(4096), timeout=5)
+                response = resp_bytes.decode(errors="ignore").strip()
 
+                writer.close()
+                await writer.wait_closed()
+
+                logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
+
+            except ConnectionResetError as e:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                raise ClamAVException(f"clamd-conn-error:{e}") from e
+            except asyncio.TimeoutError as e:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                raise ClamAVException(f"clamd-timeout-error:{e}") from e
+            except Exception as e:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                raise ClamAVException(f"clamd-scan-error:{e}") from e
+
+        try:
             elapsed = time.monotonic() - start_time
 
             # Parse response
@@ -145,12 +176,23 @@ class S3Storage:
 
             if "FOUND" in response:
                 self._statistics["infected"] += 1
-                virus = response.split("FOUND")[0].split(":")[-1].strip()
+                infos = response.split("FOUND")[0].split(":")[-1].strip()
                 return ClamAVResult(
                     key=key,
                     bucket=bucket,
                     status="INFECTED",
-                    virus=virus,
+                    infos=infos,
+                    instance=f"{host}:{port}",
+                    analyse=round(elapsed, 3),
+                )
+
+            if "ERROR" in response:
+                infos = response.split("ERROR")[0].split(":")[-1].strip()
+                return ClamAVResult(
+                    key=key,
+                    bucket=bucket,
+                    status="ERROR",
+                    infos=infos,
                     instance=f"{host}:{port}",
                     analyse=round(elapsed, 3),
                 )

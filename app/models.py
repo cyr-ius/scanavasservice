@@ -16,13 +16,13 @@ class Metadata(BaseModel):
 class MessageBase(BaseModel):
     key: str
     bucket: str
-    status: Literal["ERROR", "PENDING", "CLEAN", "INFECTED"]
+    status: Literal["ERROR", "PENDING", "CLEAN", "INFECTED", "ERROR"] = "PENDING"
     timestamp: datetime = datetime.now()
 
 
 class ClamAVResult(MessageBase):
     instance: str | None = None
-    virus: str | None = None
+    infos: str | None = None
     analyse: float | None = None
 
 
