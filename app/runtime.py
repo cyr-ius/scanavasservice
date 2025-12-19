@@ -132,8 +132,8 @@ async def worker(
                 bucket=bucket,
                 status="ERROR",
                 infos="All CLAMD attempts failed",
+                analyse=0,
             )
-            # raise ClamAVFailedAll(last_exception)
 
         # Move object based on scan result
         target = (
