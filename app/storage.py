@@ -180,7 +180,7 @@ class S3Storage:
             raise ClamAVScanException(f"clamd-scan-nostatus:{key} - {host}:{port}")
 
         except Exception as e:
-            raise ClamAVException(f"clamd-scan-error:{e}") from e
+            raise ClamAVException(f"clamd-scan-exception:{e}") from e
 
     @retry(tries=RETRY, delay=BASE_DELAY, logger=logger)
     async def async_call_webhook(self, key: str, url: str, payload: dict):
