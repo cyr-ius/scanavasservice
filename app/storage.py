@@ -138,20 +138,6 @@ class S3Storage:
 
                 logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
 
-            except ConnectionResetError as e:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
-                raise ClamAVException(f"clamd-conn-error:{e}") from e
-            except asyncio.TimeoutError as e:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
-                raise ClamAVException(f"clamd-timeout-error:{e}") from e
             except Exception as e:
                 try:
                     writer.close()
@@ -188,14 +174,7 @@ class S3Storage:
 
             if "ERROR" in response:
                 infos = response.split("ERROR")[0].split(":")[-1].strip()
-                return ClamAVResult(
-                    key=key,
-                    bucket=bucket,
-                    status="ERROR",
-                    infos=infos,
-                    instance=f"{host}:{port}",
-                    analyse=round(elapsed, 3),
-                )
+                raise ClamAVScanException(f"clamd-scan-error:{infos}")
 
             self._statistics["errors"] += 1
             raise ClamAVScanException(f"clamd-scan-nostatus:{key} - {host}:{port}")
