@@ -172,12 +172,10 @@ class S3Storage:
                     analyse=round(elapsed, 3),
                 )
 
-            if "ERROR" in response:
-                infos = response.split("ERROR")[0].split(":")[-1].strip()
-                raise ClamAVScanException(f"clamd-scan-error:{infos}")
-
             self._statistics["errors"] += 1
-            raise ClamAVScanException(f"clamd-scan-nostatus:{key} - {host}:{port}")
+            raise ClamAVScanException(
+                f"clamd-scan-nostatus:{key} - {host}:{port} - {response}"
+            )
 
         except Exception as e:
             raise ClamAVException(f"clamd-scan-exception:{e}") from e
