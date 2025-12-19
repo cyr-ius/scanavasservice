@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import asyncio
 import json
+import ssl
 import time
 from collections.abc import Awaitable
-from typing import Any, Dict
+from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from const import (
@@ -16,6 +17,8 @@ from const import (
     KAFKA_SASL_USERNAME,
     KAFKA_SECURITY_PROTOCOL,
     KAFKA_SERVERS,
+    KAFKA_SSL_CHECK_HOSTNAME,
+    KAFKA_SSL_VERIFY_MODE,
     KAFKA_TOPIC,
     KAFKAT_STATS,
     MAX_CONCURRENT_SCANS,
@@ -59,6 +62,15 @@ def fire_and_forget(coro: Awaitable[None]):
     asyncio.create_task(wrapper())
 
 
+def _ssl_context():
+    """Create SSL context for Kafka connections if needed."""
+
+    context = ssl.create_default_context()
+    context.check_hostname = KAFKA_SSL_CHECK_HOSTNAME
+    context.verify_mode = ssl.CERT_REQUIRED if KAFKA_SSL_VERIFY_MODE else ssl.CERT_NONE
+    return context
+
+
 # ----------------- WORKER -----------------
 @retry(
     exceptions=(
@@ -74,7 +86,7 @@ async def worker(
     worker_id: str,
     storage: S3Storage,
     monitor: Monitor,
-    record: Dict[str, Any],
+    record: dict[str, Any],
     producer: AIOKafkaProducer,
 ) -> None:
     """Worker that selects the best host adaptively, performs scan, updates stats and moves object."""
@@ -176,6 +188,7 @@ async def consume_loop(
         sasl_plain_username=sasl_plain_username,
         sasl_plain_password=sasl_plain_password,
         auto_offset_reset="latest",
+        ssl_context=_ssl_context(),
     )
     await consumer.start()
     try:
@@ -238,6 +251,7 @@ async def main():
         sasl_mechanism=sasl_mechanism,  # type: ignore
         sasl_plain_username=sasl_plain_username,
         sasl_plain_password=sasl_plain_password,
+        ssl_context=_ssl_context(),
     )
     await producer.start()
 
