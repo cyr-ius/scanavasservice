@@ -1,5 +1,6 @@
 # main.py
 import json
+import ssl
 import uuid
 from contextlib import asynccontextmanager
 
@@ -10,8 +11,15 @@ from const import (
     CLIENT_ID,
     CLIENT_SCOPES,
     CLIENT_SECRET,
+    KAFKA_SASL_MECHANISM,
+    KAFKA_SASL_PASSWORD,
+    KAFKA_SASL_USERNAME,
+    KAFKA_SECURITY_PROTOCOL,
     KAFKA_SERVERS,
+    KAFKA_SSL_CHECK_HOSTNAME,
+    KAFKA_SSL_VERIFY_MODE,
     KAFKAT_STATS,
+    MAX_CHUNK_SIZE,
     S3_ACCESS_KEY,
     S3_BUCKET,
     S3_ENDPOINT,
@@ -27,8 +35,6 @@ from fastapi.responses import StreamingResponse
 from models import BuckenContent, ScanResult, UploadResponse
 from mylogging import mylogging
 from pydantic import HttpUrl
-
-CHUNK_SIZE = 64 * 1024
 
 logger = mylogging.getLogger("api")
 session = get_session()
@@ -234,7 +240,7 @@ async def s3_object_stream(bucket: str, key: str):
         resp = await s3_client.get_object(Bucket=bucket, Key=key)  # type: ignore
         body = resp["Body"]
         try:
-            async for chunk in body.iter_chunks(CHUNK_SIZE):
+            async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
                 if not chunk:
                     break
                 yield chunk
@@ -246,12 +252,40 @@ async def s3_object_stream(bucket: str, key: str):
                 pass
 
 
+def _ssl_context():
+    """Create SSL context for Kafka connections if needed."""
+
+    context = ssl.create_default_context()
+    context.check_hostname = KAFKA_SSL_CHECK_HOSTNAME
+    context.verify_mode = ssl.CERT_REQUIRED if KAFKA_SSL_VERIFY_MODE else ssl.CERT_NONE
+    return context
+
+
 async def get_last_message() -> dict | None:
+    """Get last message from Kafka topic."""
+
+    if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
+        security_protocol = KAFKA_SECURITY_PROTOCOL
+        sasl_mechanism = KAFKA_SASL_MECHANISM
+        sasl_plain_username = KAFKA_SASL_USERNAME
+        sasl_plain_password = KAFKA_SASL_PASSWORD
+    else:
+        security_protocol = "PLAINTEXT"
+        sasl_mechanism = None
+        sasl_plain_username = None
+        sasl_plain_password = None
+
     consumer = AIOKafkaConsumer(
-        bootstrap_servers=KAFKA_SERVERS,
+        bootstrap_servers=KAFKA_SERVERS,  # type: ignore
         enable_auto_commit=False,  # ne jamais avancer l'offset
         auto_offset_reset="latest",  # démarrer au dernier offset
         group_id=f"api-tracker-{uuid.uuid4()}",
+        security_protocol=security_protocol,
+        sasl_mechanism=sasl_mechanism,  # type: ignore
+        sasl_plain_username=sasl_plain_username,
+        sasl_plain_password=sasl_plain_password,
+        ssl_context=_ssl_context(),
+        value_deserializer=lambda x: json.loads(x.decode("utf-8")),
     )
     await consumer.start()
 
@@ -272,7 +306,7 @@ async def get_last_message() -> dict | None:
         if last_offset >= 0:
             consumer.seek(tp, last_offset)
             msg = await consumer.getone()
-            last_messages.append(json.loads(msg.value.decode("utf-8")))
+            last_messages.append(msg.value)
 
     await consumer.stop()
     return last_messages[-1] if last_messages else None
