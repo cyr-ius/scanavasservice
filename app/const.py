@@ -33,7 +33,7 @@ CLAMD_HOSTS = parse_hosts(os.getenv("CLAMD_HOSTS", "clamav:3310"))
 CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 30))
 
 MAX_CHUNK_SIZE = int(
-    os.getenv("MAX_CHUNK_SIZE", 1024 * 64)
+    os.getenv("MAX_CHUNK_SIZE", 1024 * 4)
 )  # must be less than StreamMaxLength ClamAV (default ClamAV 25MB)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
