@@ -7,6 +7,10 @@ from collections.abc import Awaitable
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from clamav import (
+    ClamAVResult,
+    ClamAVScanner,
+)
 from const import (
     BASE_DELAY,
     CLAMD_CNX_TIMEOUT,
@@ -31,16 +35,10 @@ from const import (
     S3_SECRET_KEY,
 )
 from helpers import retry
-from models import ClamAVResult, ScanResult
+from models import ScanResult
 from monitor import Monitor
 from mylogging import mylogging
-from storage import (
-    ClamAVException,
-    S3BucketKeyException,
-    S3LockException,
-    S3MoveException,
-    S3Storage,
-)
+from storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
 
 logger = mylogging.getLogger("scanav")
 
@@ -75,6 +73,7 @@ def _ssl_context():
     exceptions=(S3BucketKeyException, S3LockException, S3MoveException),
     tries=RETRY,
     delay=BASE_DELAY,
+    logger=logger,
 )
 async def worker(
     worker_id: str,
@@ -82,6 +81,7 @@ async def worker(
     monitor: Monitor,
     record: dict[str, Any],
     producer: AIOKafkaProducer,
+    clamav: ClamAVScanner,
 ) -> None:
     """Worker that selects the best host adaptively, performs scan, updates stats and moves object."""
     async with scan_semaphore:
@@ -94,40 +94,28 @@ async def worker(
         # Set status to PENDING
         await storage.async_set_s3_tags(key, bucket, {"status": "PENDING"})
 
-        attempt = 0
-        last_exception = None
+        host, port, host_key = await monitor.select_best_host()
+        await monitor.mark_host_busy(host_key)
+        scan_start = time.monotonic()
 
-        while attempt < RETRY:
-            attempt += 1
-            host, port, host_key = await monitor.select_best_host()
-            await monitor.mark_host_busy(host_key)
-            scan_start = time.monotonic()
-
-            try:
-                scan = await storage.async_scan_s3_object(key, bucket, host, port)
-            except ClamAVException as e:
-                await monitor.mark_host_done(host_key, elapsed=None, success=False)
-                last_exception = e
-                logger.warning(
-                    f"[worker-{worker_id}] ClamAV attempt failed on {host_key}: {e} (attempt {attempt})"
-                )
-                await asyncio.sleep(BASE_DELAY * (2 ** (attempt - 1)))
-                continue
-            else:
-                elapsed = time.monotonic() - scan_start
-                await monitor.mark_host_done(host_key, elapsed=elapsed, success=True)
-                break
-        else:
+        try:
+            await clamav.async_connect(host, port, host_key)
+            scan = await storage.async_scan_s3_object(key, bucket, clamav)
+        except Exception as last_exception:
             logger.error(
-                f"[worker-{worker_id}] All CLAMD attempts failed for {key}: {last_exception}"
+                f"[worker-{worker_id}] ClamAV error for {key} on {host}:{port}: {last_exception}"
             )
             scan = ClamAVResult(
                 key=key,
                 bucket=bucket,
                 status="ERROR",
-                infos="All CLAMD attempts failed",
+                infos="ClamAV error",
                 analyse=0,
+                instance=f"{host}:{port}",
             )
+
+        elapsed = time.monotonic() - scan_start
+        await monitor.mark_host_done(host_key, elapsed=elapsed, success=True)
 
         # Move object based on scan result
         target = (
@@ -147,7 +135,7 @@ async def worker(
         await producer.send_and_wait(
             KAFKAT_STATS,
             value=json.dumps(
-                {**storage.statistics, "monitor": monitor.statistics}
+                {**clamav.statistics, "monitor": monitor.statistics}
             ).encode("utf-8"),
         )
 
@@ -164,7 +152,10 @@ async def worker(
 
 # ----------------- CONSUMER -----------------
 async def consume_loop(
-    producer: AIOKafkaProducer, storage: S3Storage, monitor: Monitor
+    producer: AIOKafkaProducer,
+    storage: S3Storage,
+    monitor: Monitor,
+    clamav: ClamAVScanner,
 ):
     if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
         security_protocol = KAFKA_SECURITY_PROTOCOL
@@ -204,7 +195,7 @@ async def consume_loop(
                             f"[kafka-consumer] Scheduling scan for object key: {key}"
                         )
                         asyncio.create_task(
-                            worker(key, storage, monitor, record, producer)
+                            worker(key, storage, monitor, record, producer, clamav)
                         )
     finally:
         await consumer.stop()
@@ -235,6 +226,7 @@ async def main():
         S3_SECRET_KEY,
         CLAMD_CNX_TIMEOUT,
     )
+    clamav = ClamAVScanner(monitor)
 
     if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
         security_protocol = KAFKA_SECURITY_PROTOCOL
@@ -260,7 +252,9 @@ async def main():
     asyncio.create_task(monitor.reset_host_failures_periodically())
     asyncio.create_task(periodic_cleanup_task(storage))
 
-    consumer_task = asyncio.create_task(consume_loop(producer, storage, monitor))
+    consumer_task = asyncio.create_task(
+        consume_loop(producer, storage, monitor, clamav)
+    )
 
     try:
         await consumer_task

@@ -1,12 +1,12 @@
 """Class for managment S3 storage."""
 
-import asyncio
 import time
 from typing import Any
 
 from aiobotocore.session import ClientCreatorContext, get_session
 from aiohttp import ClientSession
-from const import BASE_DELAY, MAX_CHUNK_SIZE, RETRY
+from clamav import ClamAVScanner, ClamAVSendException
+from const import BASE_DELAY, RETRY
 from helpers import retry
 from models import ClamAVResult, ScanResult
 from mylogging import mylogging
@@ -27,12 +27,6 @@ class S3Storage:
         self.key = key
         self.secret = secret
         self._clamd_timeout = clamd_timeout
-        self._statistics = {"infected": 0, "cleaned": 0, "errors": 0}
-
-    @property
-    def statistics(self):
-        """Return statis."""
-        return self._statistics
 
     async def _get_s3_client(self) -> ClientCreatorContext:
         session = get_session()
@@ -91,94 +85,26 @@ class S3Storage:
                         except Exception as e:
                             logger.exception(f"Failed to delete {bucket}/{key}: {e}")
 
+    @retry(
+        exceptions=(ClamAVSendException,), tries=RETRY, delay=BASE_DELAY, logger=logger
+    )
     async def async_scan_s3_object(
-        self, key: str, bucket: str, host: str, port: int
+        self, key: str, bucket: str, clamav: ClamAVScanner
     ) -> ClamAVResult:
         """Scan a single S3 file using a specific CLAMD host via INSTREAM."""
 
-        logger.debug("Scanning %s/%s", bucket, key)
-        start_time = time.monotonic()
-
         # fetch S3 stream (fresh for each attempt)
         async with await self._get_s3_client() as s3_client:
+            # connect to S3 and get object
             try:
                 logger.debug("Fetching S3 object %s/%s", bucket, key)
                 resp = await s3_client.get_object(Bucket=bucket, Key=key)  # type: ignore
                 body = resp["Body"]
-
             except Exception as e:
                 raise S3GetObjectException(f"s3-get-error:{e}") from e
-            try:
-                logger.debug("Connecting to clamd %s:%d", host, port)
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(host, port),
-                    timeout=float(self._clamd_timeout),
-                )
-            except Exception as e:
-                raise ClamAVException(f"clamd-conn-error:{e}") from e
-
-            try:
-                writer.write(b"nINSTREAM\n")
-                await writer.drain()
-
-                async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
-                    if not chunk:
-                        continue
-                    writer.write(len(chunk).to_bytes(4, "big") + chunk)
-                    await writer.drain()
-
-                writer.write((0).to_bytes(4, "big"))
-                await writer.drain()
-
-                resp_bytes = await asyncio.wait_for(reader.read(4096), timeout=5)
-                response = resp_bytes.decode(errors="ignore").strip()
-
-                writer.close()
-                await writer.wait_closed()
-
-                logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
-
-            except Exception as e:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
-                raise ClamAVException(f"clamd-scan-error:{e}") from e
-
-        try:
-            elapsed = time.monotonic() - start_time
-
-            # Parse response
-            if "OK" in response:
-                self._statistics["cleaned"] += 1
-                return ClamAVResult(
-                    key=key,
-                    bucket=bucket,
-                    status="CLEAN",
-                    instance=f"{host}:{port}",
-                    analyse=round(elapsed, 3),
-                )
-
-            if "FOUND" in response:
-                self._statistics["infected"] += 1
-                infos = response.split("FOUND")[0].split(":")[-1].strip()
-                return ClamAVResult(
-                    key=key,
-                    bucket=bucket,
-                    status="INFECTED",
-                    infos=infos,
-                    instance=f"{host}:{port}",
-                    analyse=round(elapsed, 3),
-                )
-
-            self._statistics["errors"] += 1
-            raise ClamAVScanException(
-                f"clamd-scan-nostatus:{key} - {host}:{port} - {response}"
-            )
-
-        except Exception as e:
-            raise ClamAVException(f"clamd-scan-exception:{e}") from e
+            else:
+                # scan with clamav
+                return await clamav.async_scan(key, bucket, body)
 
     @retry(tries=RETRY, delay=BASE_DELAY, logger=logger)
     async def async_call_webhook(self, key: str, url: str, payload: dict):
@@ -252,15 +178,3 @@ class S3MetadataException(S3StorageException):
 
 class S3BucketKeyException(S3StorageException):
     """Custom exception for S3 unlock errors."""
-
-
-class ClamAVException(Exception):
-    """Custom exception for scan result fetch errors."""
-
-
-class ClamAVScanException(ClamAVException):
-    """Scan Exception"""
-
-
-class ClamAVFailedAll(ClamAVException):
-    """All ClamAV failed."""
