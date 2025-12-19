@@ -201,7 +201,9 @@ async def consume_loop(
                 if record.get("eventName") == "s3:ObjectCreated:Put":
                     logger.debug("New S3 object to scan detected.")
                     if key := record.get("s3", {}).get("object", {}).get("key"):
-                        logger.info(f"Scheduling scan for object key: {key}")
+                        logger.info(
+                            f"[kafka-consumer] Scheduling scan for object key: {key}"
+                        )
                         asyncio.create_task(
                             worker(key, storage, monitor, record, producer)
                         )
