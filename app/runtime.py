@@ -127,7 +127,13 @@ async def worker(
             logger.error(
                 f"[worker-{worker_id}] All CLAMD attempts failed for {key}: {last_exception}"
             )
-            raise ClamAVFailedAll(last_exception)
+            scan = ClamAVResult(
+                key=key,
+                bucket=bucket,
+                status="ERROR",
+                infos=f"All CLAMD attempts failed ({last_exception})",
+            )
+            # raise ClamAVFailedAll(last_exception)
 
         # Move object based on scan result
         target = (
