@@ -30,7 +30,7 @@ S3_SCAN_RESULT = os.getenv("S3_SCAN_RESULT", "processed")
 S3_SCAN_QUARANTINE = os.getenv("S3_SCAN_QUARANTINE", "quarantine")
 
 CLAMD_HOSTS = parse_hosts(os.getenv("CLAMD_HOSTS", "clamav:3310"))
-CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 30))
+CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 120))
 
 MAX_CHUNK_SIZE = int(
     os.getenv("MAX_CHUNK_SIZE", 1024 * 4)
