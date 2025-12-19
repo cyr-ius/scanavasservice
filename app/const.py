@@ -8,6 +8,10 @@ KAFKA_SERVERS = os.getenv("KAFKA_SERVERS", "kafka:9092").split(",")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "files_to_scan")
 KAFKAT_STATS = "statistics"
 KAFKA_LOG_RETENTION_MS = int(os.getenv("KAFKA_LOG_RETENTION_MS", 86400000))
+KAFKA_SECURITY_PROTOCOL = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
+KAFKA_SASL_MECHANISM = os.getenv("KAFKA_SASL_MECHANISM", "PLAIN")
+KAFKA_SASL_USERNAME = os.getenv("KAFKA_SASL_USERNAME", "")
+KAFKA_SASL_PASSWORD = os.getenv("KAFKA_SASL_PASSWORD", "")
 
 VERSION = os.getenv("APP_VERSION", "unknown")
 MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))
@@ -22,7 +26,11 @@ S3_SCAN_RESULT = os.getenv("S3_SCAN_RESULT", "processed")
 S3_SCAN_QUARANTINE = os.getenv("S3_SCAN_QUARANTINE", "quarantine")
 
 CLAMD_HOSTS = parse_hosts(os.getenv("CLAMD_HOSTS", "clamav:3310"))
-CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 10))
+CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 30))
+
+MAX_CHUNK_SIZE = int(
+    os.getenv("MAX_CHUNK_SIZE", 1024 * 64)
+)  # must be less than StreamMaxLength ClamAV (default ClamAV 25MB)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
