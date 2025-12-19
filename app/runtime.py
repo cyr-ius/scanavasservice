@@ -131,7 +131,7 @@ async def worker(
                 key=key,
                 bucket=bucket,
                 status="ERROR",
-                infos=f"All CLAMD attempts failed ({last_exception})",
+                infos="All CLAMD attempts failed",
             )
             # raise ClamAVFailedAll(last_exception)
 
