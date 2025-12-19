@@ -36,7 +36,6 @@ from monitor import Monitor
 from mylogging import mylogging
 from storage import (
     ClamAVException,
-    ClamAVFailedAll,
     S3BucketKeyException,
     S3LockException,
     S3MoveException,
@@ -73,12 +72,7 @@ def _ssl_context():
 
 # ----------------- WORKER -----------------
 @retry(
-    exceptions=(
-        S3BucketKeyException,
-        S3LockException,
-        S3MoveException,
-        ClamAVFailedAll,
-    ),
+    exceptions=(S3BucketKeyException, S3LockException, S3MoveException),
     tries=RETRY,
     delay=BASE_DELAY,
 )
@@ -143,7 +137,6 @@ async def worker(
         )
 
         duration = time.monotonic() - start_time
-        scan = scan or ClamAVResult(key=key, bucket=bucket, status="PENDING")
         result = ScanResult(worker=worker_id, duration=duration, **scan.model_dump())
         await storage.async_move_s3_object(key, bucket, target, result)
         logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
