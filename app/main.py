@@ -171,10 +171,10 @@ async def scan_status(key: str) -> ScanResult:
                 return ScanResult(key=key, bucket=S3_BUCKET, status="PENDING")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error("Status error (%s)", e)
+            logger.error("Status exception %s (%s)", key, e)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Status exception ({e})",
+                detail=f"Status exception {key} ({e})",
             )
 
 
