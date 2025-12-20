@@ -101,10 +101,8 @@ async def worker(
         try:
             await clamav.async_connect(host, port, host_key)
             scan = await storage.async_scan_s3_object(key, bucket, clamav)
-        except Exception as last_exception:
-            logger.error(
-                f"[worker-{worker_id}] ClamAV error for {key} on {host}:{port}: {last_exception}"
-            )
+        except Exception as e:
+            logger.error(f"[worker-{worker_id}] {e}")
             scan = ClamAVResult(
                 key=key,
                 bucket=bucket,
