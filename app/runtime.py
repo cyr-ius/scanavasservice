@@ -35,7 +35,7 @@ from const import (
     S3_SECRET_KEY,
 )
 from helpers import retry
-from models import ScanResult
+from models import ScanResponse
 from monitor import Monitor
 from mylogging import mylogging
 from storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
@@ -94,26 +94,13 @@ async def worker(
         # Set status to PENDING
         await storage.async_set_s3_tags(key, bucket, {"status": "PENDING"})
 
-        host, port, host_key = await monitor.select_best_host()
-        await monitor.mark_host_busy(host_key)
-        scan_start = time.monotonic()
-
         try:
-            await clamav.async_connect(host, port, host_key)
             scan = await storage.async_scan_s3_object(key, bucket, clamav)
         except Exception as e:
             logger.error(f"[worker-{worker_id}] {e}")
             scan = ClamAVResult(
-                key=key,
-                bucket=bucket,
-                status="ERROR",
-                infos="ClamAV error",
-                analyse=0,
-                instance=f"{host}:{port}",
+                key=key, bucket=bucket, status="ERROR", infos="ClamAV error", analyse=0
             )
-
-        elapsed = time.monotonic() - scan_start
-        await monitor.mark_host_done(host_key, elapsed=elapsed, success=True)
 
         # Move object based on scan result
         target = (
@@ -123,7 +110,7 @@ async def worker(
         )
 
         duration = time.monotonic() - start_time
-        result = ScanResult(worker=worker_id, duration=duration, **scan.model_dump())
+        result = ScanResponse(worker=worker_id, duration=duration, **scan.model_dump())
         await storage.async_move_s3_object(key, bucket, target, result)
         logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
 

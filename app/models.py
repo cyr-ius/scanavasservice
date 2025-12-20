@@ -5,8 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-# Fastapi
-
 
 class Metadata(BaseModel):
     originalfilename: str | None = None
@@ -26,7 +24,7 @@ class ClamAVResult(MessageBase):
     analyse: float | None = None
 
 
-class ScanResult(Metadata, ClamAVResult, MessageBase):
+class ScanResponse(Metadata, ClamAVResult, MessageBase):
     duration: float | None = None
     worker: str | None = None
 
@@ -35,8 +33,13 @@ class UploadResponse(Metadata, MessageBase):
     pass
 
 
-class BuckenContent(ScanResult):
+class BucketResponse(ScanResponse):
     lastmodified: datetime
     etag: str
     size: int
     storageclass: str
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+    code: int
