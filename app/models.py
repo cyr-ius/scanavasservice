@@ -26,7 +26,6 @@ class ClamAVResult(MessageBase):
 
 class ScanResponse(Metadata, ClamAVResult, MessageBase):
     duration: float | None = None
-    worker: str | None = None
 
 
 class BucketResponse(ScanResponse):

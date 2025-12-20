@@ -102,7 +102,7 @@ async def worker(
         )
 
         duration = time.monotonic() - start_time
-        result = ScanResponse(worker=worker_id, duration=duration, **scan.model_dump())
+        result = ScanResponse(duration=duration, **scan.model_dump())
         await storage.async_move_s3_object(key, bucket, target, result)
         logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
 
