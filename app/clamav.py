@@ -95,26 +95,27 @@ class ClamAVScanner:
             )
             await close_writer()
 
-        # send INSTREAM command and stream file
         try:
-            writer.write(b"nINSTREAM\n")
-            await writer.drain()
-
-            async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
-                if not chunk:
-                    continue
-                writer.write(len(chunk).to_bytes(4, "big") + chunk)
+            # send INSTREAM command and stream file
+            try:
+                writer.write(b"nINSTREAM\0")  # Changez \n en \0
                 await writer.drain()
 
-            writer.write((0).to_bytes(4, "big"))
-            await writer.drain()
-        except BrokenPipeError as e:
-            await mark_error_and_close()
-            raise ClamAVSizeExceeded("[clamd-size-exceeded]") from e
-        except Exception as e:
-            await mark_error_and_close()
-            raise ClamAVSendException(f"[clamd-send-error] {e}") from e
-        else:
+                async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
+                    if not chunk:
+                        continue
+                    writer.write(len(chunk).to_bytes(4, "big") + chunk)
+                    await writer.drain()
+
+                writer.write((0).to_bytes(4, "big"))
+                await writer.drain()
+            except BrokenPipeError as e:
+                await close_writer()
+                raise ClamAVSizeExceeded("[clamd-size-exceeded]") from e
+            except Exception as e:
+                await mark_error_and_close()
+                raise ClamAVSendException(f"[clamd-send-error] {e}") from e
+
             # read response
             try:
                 resp_bytes = await asyncio.wait_for(
@@ -125,15 +126,15 @@ class ClamAVScanner:
                 logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
 
             except asyncio.TimeoutError as e:
+                await close_writer()
                 raise ClamAVTimeoutException(
                     f"[clamd-response-timeout-{key}] {e}"
                 ) from e
             except Exception as e:
+                await close_writer()
                 raise ClamAVResponseException(
                     f"[clamd-response-error-{key}] {e}"
                 ) from e
-            finally:
-                await close_writer()
 
             # Parse response
             elapsed = time.monotonic() - start_time
@@ -170,3 +171,5 @@ class ClamAVScanner:
                 analyse=0,
                 instance=f"{host}:{port}",
             )
+        finally:
+            await close_writer()

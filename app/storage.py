@@ -132,7 +132,13 @@ class S3Storage:
                 raise S3GetObjectException(f"s3-get-error:{e}") from e
             else:
                 # scan with clamav
-                return await clamav.async_scan(key, bucket, body)
+                try:
+                    return await clamav.async_scan(key, bucket, body)
+                finally:
+                    try:
+                        await body.close()
+                    except Exception:
+                        pass
 
     async def async_get_s3_metadata(self, key: str, bucket: str) -> dict[str, Any]:
         """Retrieve metadata."""
