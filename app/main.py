@@ -8,6 +8,7 @@ from aiobotocore.session import get_session
 from aiokafka import AIOKafkaConsumer
 from aiokafka.structs import TopicPartition
 from const import (
+    CLAMD_CHUNK_SIZE,
     CLIENT_ID,
     CLIENT_SCOPES,
     CLIENT_SECRET,
@@ -16,16 +17,15 @@ from const import (
     KAFKA_SASL_USERNAME,
     KAFKA_SECURITY_PROTOCOL,
     KAFKA_SERVERS,
-    KAFKA_SSL_CHECK_HOSTNAME,
-    KAFKA_SSL_VERIFY_MODE,
     KAFKAT_STATS,
-    MAX_CHUNK_SIZE,
     S3_ACCESS_KEY,
     S3_BUCKET,
     S3_ENDPOINT,
     S3_SCAN_QUARANTINE,
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
+    SSL_CHECK_HOSTNAME,
+    SSL_VERIFY_MODE,
     VERSION,
 )
 from depends import protected
@@ -284,7 +284,7 @@ async def s3_object_stream(bucket: str, key: str):
         resp = await s3_client.get_object(Bucket=bucket, Key=key)  # type: ignore
         body = resp["Body"]
         try:
-            async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
+            async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
                 if not chunk:
                     break
                 yield chunk
@@ -300,8 +300,8 @@ def _ssl_context():
     """Create SSL context for Kafka connections if needed."""
 
     context = ssl.create_default_context()
-    context.check_hostname = KAFKA_SSL_CHECK_HOSTNAME
-    context.verify_mode = ssl.CERT_REQUIRED if KAFKA_SSL_VERIFY_MODE else ssl.CERT_NONE
+    context.check_hostname = SSL_CHECK_HOSTNAME
+    context.verify_mode = ssl.CERT_REQUIRED if SSL_VERIFY_MODE else ssl.CERT_NONE
     return context
 
 

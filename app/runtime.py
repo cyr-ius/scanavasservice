@@ -21,8 +21,6 @@ from const import (
     KAFKA_SASL_USERNAME,
     KAFKA_SECURITY_PROTOCOL,
     KAFKA_SERVERS,
-    KAFKA_SSL_CHECK_HOSTNAME,
-    KAFKA_SSL_VERIFY_MODE,
     KAFKA_TOPIC,
     KAFKAT_STATS,
     MAX_CONCURRENT_SCANS,
@@ -33,6 +31,8 @@ from const import (
     S3_SCAN_QUARANTINE,
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
+    SSL_CHECK_HOSTNAME,
+    SSL_VERIFY_MODE,
 )
 from helpers import retry
 from models import ScanResponse
@@ -63,8 +63,8 @@ def _ssl_context():
     """Create SSL context for Kafka connections if needed."""
 
     context = ssl.create_default_context()
-    context.check_hostname = KAFKA_SSL_CHECK_HOSTNAME
-    context.verify_mode = ssl.CERT_REQUIRED if KAFKA_SSL_VERIFY_MODE else ssl.CERT_NONE
+    context.check_hostname = SSL_CHECK_HOSTNAME
+    context.verify_mode = ssl.CERT_REQUIRED if SSL_VERIFY_MODE else ssl.CERT_NONE
     return context
 
 

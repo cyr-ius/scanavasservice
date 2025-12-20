@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from const import CLAMD_CNX_TIMEOUT, MAX_CHUNK_SIZE
+from const import CLAMD_CHUNK_SIZE, CLAMD_CNX_TIMEOUT
 from models import ClamAVResult
 from monitor import Monitor
 from mylogging import mylogging
@@ -100,7 +100,7 @@ class ClamAVScanner:
             writer.write(b"nINSTREAM\n")
             await writer.drain()
 
-            async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
+            async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
                 if not chunk:
                     continue
                 writer.write(len(chunk).to_bytes(4, "big") + chunk)

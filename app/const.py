@@ -4,6 +4,15 @@ import os
 
 from helpers import parse_hosts
 
+# General configuration
+BASE_DELAY = float(os.getenv("BASE_DELAY", 20))
+LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))
+RETRY = int(os.getenv("RETRY", 3))
+
+
+# Kafka configuration
 KAFKA_SERVERS = os.getenv("KAFKA_SERVERS", "kafka:9092").split(",")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "files_to_scan")
 KAFKAT_STATS = "statistics"
@@ -12,32 +21,23 @@ KAFKA_SECURITY_PROTOCOL = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
 KAFKA_SASL_MECHANISM = os.getenv("KAFKA_SASL_MECHANISM", "PLAIN")
 KAFKA_SASL_USERNAME = os.getenv("KAFKA_SASL_USERNAME", "")
 KAFKA_SASL_PASSWORD = os.getenv("KAFKA_SASL_PASSWORD", "")
-KAFKA_SSL_CHECK_HOSTNAME = (
-    os.getenv("KAFKA_SSL_CHECK_HOSTNAME", "false").lower() == "true"
-)
-KAFKA_SSL_VERIFY_MODE = os.getenv("KAFKA_SSL_VERIFY_MODE", "false").lower() == "true"
 
-VERSION = os.getenv("APP_VERSION", "unknown")
-MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))
-RETRY = int(os.getenv("RETRY", 3))
-BASE_DELAY = float(os.getenv("BASE_DELAY", 20))
+# SSL configuration
+SSL_CHECK_HOSTNAME = os.getenv("SSL_CHECK_HOSTNAME", "false").lower() == "true"
+SSL_VERIFY_MODE = os.getenv("SSL_VERIFY_MODE", "false").lower() == "true"
 
-S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
+# S3 configuration
 S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "minioadmin")
-S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "minioadmin")
 S3_BUCKET = os.getenv("S3_BUCKET", "scans")
-S3_SCAN_RESULT = os.getenv("S3_SCAN_RESULT", "processed")
+S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
 S3_SCAN_QUARANTINE = os.getenv("S3_SCAN_QUARANTINE", "quarantine")
+S3_SCAN_RESULT = os.getenv("S3_SCAN_RESULT", "processed")
+S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "minioadmin")
 
-CLAMD_HOSTS = parse_hosts(os.getenv("CLAMD_HOSTS", "clamav:3310"))
+# ClamAV configuration
 CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 120))
-
-MAX_CHUNK_SIZE = int(
-    os.getenv("MAX_CHUNK_SIZE", 1024 * 4)
-)  # must be less than StreamMaxLength ClamAV (default ClamAV 25MB)
-
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
+CLAMD_HOSTS = parse_hosts(os.getenv("CLAMD_HOSTS", "clamav:3310"))
+CLAMD_CHUNK_SIZE = int(os.getenv("CLAMD_CHUNK_SIZE", 1024 * 4))
 
 # Hybrid scoring params (tweakable)
 BUSY_WEIGHT = float(os.getenv("BUSY_WEIGHT", 1.0))
@@ -56,3 +56,6 @@ OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL", "")
 CLIENT_ID = os.getenv("CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
 CLIENT_SCOPES = os.getenv("CLIENT_SCOPES", "openid,profile,email,groups").split(",")
+
+# Application version
+VERSION = os.getenv("APP_VERSION", "unknown")
