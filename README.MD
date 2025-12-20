@@ -6,21 +6,22 @@ Le moteur ClamAV sert d'antivirus. Kafka sert de bus de messages pour ordonner l
 ## Contenu principal du dossier app
 
 Le Runtime surveille la file Kafka et envoie à l'analyse ClamAV les fichiers , il est autonome
-il peut être lancer par la commande : ``` python runtime.py ```
+il peut être lancer par la commande : `python runtime.py`
 
-L'API permet de soumettre des ficheirs via Rest API , elle est facultative. 
-elle est lancé via la  commande : ``` uvicorn main:app --host 0.0.0.0 --port 80 ```
+L'API permet de soumettre des ficheirs via Rest API , elle est facultative.
+elle est lancé via la commande : `uvicorn main:app --host 0.0.0.0 --port 8000`
 
 Il existe deux façon de soumettre un ifchier à l'analyse:
- - soit en déposant le fichier dans le bucket
- - soit par upload du fichier via l'api Rest
+
+- soit en déposant le fichier dans le bucket
+- soit par upload du fichier via l'api Rest
 
 Quelque soit la méthode , le bucket S3 doit être en capacité d'émettre des évènements vers une file Kafka quand le fichier est déposé dans le bucket.
 
 ### Moteur d'analyse
 
 - app/runtime.py : point d'entrée du scanner (consommateur Kafka). Lit les variables d'environnement et démarre la boucle de traitement.
-- app/storage.py : class qui permet de manipuler les données au sein du stockage S3 , 
+- app/storage.py : class qui permet de manipuler les données au sein du stockage S3 ,
   - async_move_s3_object , deplace un fichier
   - async_cleanup_s3_folder, nettoie un bucket ou une répertoire
   - async_scan_s3_object, passe le fichier à l'antivirus
@@ -28,18 +29,24 @@ Quelque soit la méthode , le bucket S3 doit être en capacité d'émettre des �
   - async_get_s3_metadata, récupère les métadata d'un fichier
   - async_get_s3_tags, récupère les tags d'un fichier
   - async_set_s3_tags, valorise des tags sur un fichier
+- app/clamav.py : class ClamAVScanner qui gère la communication avec les daemons ClamAV
+  - async_connect, établit une connexion TCP vers un daemon clamd
+  - async_scan, lance un scan via le protocole INSTREAM (envoie le fichier au format binaire en streaming)
+  - Utilise le protocole INSTREAM avec commande `nINSTREAM\0` suivi des chunks de données
 - app/mylogging.py : class qui met en forme les logs et les traces
 - app/monitor.py : class qui permet de surveiller les différents moteur ClamAV , de calculer des statistiques afin d'envoyer le fichier au moteur ClamAv le plus efficient.
-  - select_best_host, cette méthode permet de renvoyer le nom de l'instance ClamAV le plus performante.
-  - reset_host_failures_periodically, cette  méthode permet de rénitialiser les statistiques de tous les moteurs
-- models.py :  model pydantics pour s'assure que les dictionnaires et les objets sont conformes
-- app/helpers.py :  function utilitaires (parsing, retrying).
-- app/exceptions: exceptions du programme ScanAVasService
+  - select_best_host, cette méthode permet de renvoyer le nom de l'instance ClamAV la plus performante selon l'algorithme d'équilibrage adaptatif
+  - mark_host_busy / mark_host_done, suivi des statistiques par host
+  - reset_host_failures_periodically, rénitialise les statistiques de tous les moteurs après un délai
+  - Algorithme d'équilibrage : pondère la charge (busy), les échecs (failures) et le temps moyen (EMA) pour sélectionner le meilleur host
+- models.py : models pydantics pour s'assure que les dictionnaires et les objets sont conformes
+- app/helpers.py : fonctions utilitaires (parsing, retrying avec backoff exponentiel).
+- app/exception.py : exceptions du programme ScanAVasService (ClamAVConnectException, ClamAVSendException, ClamAVTimeoutException, etc.)
 
 ### API de gestion
 
-- app/main.py: API permettant l'ajout , la récupération  d'un fichier scanné. L' API permet aussi d'obtenir le status d'un fichier. L'api permet aussi d'obtenir les statistiques des moteurs ClamAV , ainsi qu'un état de situation des buckets.
-- app/depends: Associété au main.py , il permet de gérer les jetons oAuth d'un Idp tiers et/ou l'accès l'api via un ClientId/ClientSecret
+- app/main.py: API permettant l'ajout , la récupération d'un fichier scanné. L' API permet aussi d'obtenir le status d'un fichier. L'api permet aussi d'obtenir les statistiques des moteurs ClamAV , ainsi qu'un état de situation des buckets.
+- app/depends.py : Associété au main.py , il permet de gérer les jetons oAuth d'un Idp tiers et/ou l'accès l'api via un ClientId/ClientSecret
 
 ### Endpoint docker
 
@@ -78,11 +85,13 @@ Remarque : certaines valeurs sont spécifiques à l'image Kafka et à sa configu
   - Description : préfixe/dossier où placer les fichiers détectés comme infectés.
   - Exemple : quarantine
 
+#### Variables ClamAV
+
 - CLAMD_HOSTS
   - Description : liste de daemons ClamAV (host:port) séparés par des virgules.
-  - Exemple : "clamav1:3310,clamav2:3310"
+  - Exemple : "scanasservice-clamav-1:3310,scanasservice-clamav-2:3310"
 - CLAMD_CNX_TIMEOUT
-  - Description : timeout (secondes) pour établir la connexion TCP vers clamd.
+  - Description : timeout (secondes) pour établir la connexion TCP vers clamd et attendre la réponse INSTREAM.
   - Exemple : 10
 - RETRY
   - Description : nombre de tentatives (sur différents hosts) avant d'abandonner le scan.
@@ -91,23 +100,22 @@ Remarque : certaines valeurs sont spécifiques à l'image Kafka et à sa configu
   - Description : délai de base (secondes) utilisé pour backoff exponentiel entre tentatives.
   - Exemple : 0.5
 
-- REDIS_URL
-  - Description : URL du service Redis utilisé pour verrouillage S3.
-  - Exemple : redis://redis:6379
-- REDIS_LOCK_TIMEOUT
-  - Description : durée (secondes) du verrou Redis sur un objet S3.
-  - Exemple : 15
+#### Variables Worker
 
-- WORKER_POOL
-  - Description : nombre de workers concurrents dans le scanner.
+- MAX_CONCURRENT_SCANS (ou WORKER_POOL)
+  - Description : nombre maximum de scans concurrents dans le scanner.
   - Exemple : 4 (ou 8 selon docker-compose)
 
+#### Variables Logging
+
 - LOG_LEVEL
-  - Description: préciser le niveau de log.
+  - Description: préciser le niveau de log du scanner.
   - Exemple: INFO (ou WARNING, ERROR, DEBUG)
 - LIB_LOG_LEVEL
   - Description: préciser le niveau de log pour les librairies tierces.
   - Exemple: INFO (ou WARNING, ERROR, DEBUG)
+
+#### Variables d'équilibrage adaptatif
 
 - BUSY_WEIGHT
   - Description : poids du nombre de tâches en cours dans l'algorithme d'équilibrage adaptatif.
@@ -125,7 +133,7 @@ Remarque : certaines valeurs sont spécifiques à l'image Kafka et à sa configu
   - Description : alpha pour l'exponential moving average (moyenne mobile) du temps de scan.
   - Exemple : 0.2
 
-Conseil : ajustez ces variables selon votre charge et votre topologie. Par exemple augmentez WORKER_POOL pour plus de parallélisme, ou réduisez RETRY si vos daemons sont instables.
+Conseil : ajustez ces variables selon votre charge et votre topologie. Par exemple augmentez MAX_CONCURRENT_SCANS pour plus de parallélisme, ou réduisez RETRY si vos daemons sont instables.
 
 ### Service Kafka (variables Kafka importantes)
 
@@ -144,23 +152,16 @@ Ces variables sont définies pour l'image kafka et contrôlent le broker. Modifi
   - Exemple : CONTROLLER
 - KAFKA_LISTENERS
   - Description : sockets d'écoute et ports exposés par Kafka dans le conteneur.
-  - Exemple : PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
+  - Exemple : PLAINTEXT://:9092,CONTROLLER://:9093
 - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
-  - Exemple : CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-- KAFKA_ADVERTISED_HOSTS / KAFKA_ADVERTISED_LISTENERS
+  - Exemple : PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+- KAFKA_ADVERTISED_LISTENERS
   - Description : valeurs annoncées aux clients externes. Adaptez à votre réseau.
-  - Exemple : KAFKA_ADVERTISED_HOSTS=${KAFKA_ADVERTISED_HOSTS:-192.168.1.1}
-  - Exemple KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOSTS}:9092
+  - Exemple : PLAINTEXT://kafka:9092
 - KAFKA_INTER_BROKER_LISTENER_NAME
   - Exemple : PLAINTEXT
 - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
   - Exemple : 1
-- KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
-  - Exemple : 1
-- KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
-  - Exemple : 1
-- KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
-  - Exemple : 0
 - KAFKA_NUM_PARTITIONS
   - Description : nombre de partitions par topic créé automatiquement.
   - Exemple : 4
@@ -179,12 +180,15 @@ Notes Kafka :
 - MINIO_ROOT_USER / MINIO_ROOT_PASSWORD
   - Description : identifiants administrateur MinIO.
   - Exemple : minioadmin / minioadmin
-- S3_ENDPOINT_URL
-  - Description : endpoint MinIO / S3 pour stockage des fichiers.
-  - Exemple : http://minio:9000
-- S3_ACCESS_KEY / S3_SECRET_KEY
-  - Description : identifiants pour accéder à MinIO.
-  - Exemple : minioadmin / minioadmin
+- MINIO_NOTIFY_KAFKA_ENABLE_SCANS
+  - Description : activer les notifications Kafka lors de dépôt de fichiers.
+  - Exemple : "on"
+- MINIO_NOTIFY_KAFKA_BROKERS_SCANS
+  - Description : broker Kafka pour les notifications MinIO.
+  - Exemple : kafka:9092
+- MINIO_NOTIFY_KAFKA_TOPIC_SCANS
+  - Description : topic Kafka où MinIO publie les événements de dépôt.
+  - Exemple : "files_to_scan"
 
 MinIO options :
 
@@ -193,14 +197,16 @@ MinIO options :
 
 ### Service ClamAV
 
+- Image : clamav/clamav:1.5.1
+- Protocol INSTREAM : le scanner utilise le protocole INSTREAM pour envoyer les fichiers en streaming vers clamd
+  - Commande : `nINSTREAM\0` (null-byte terminé, pas newline)
+  - Format : [chunk_size:4bytes][chunk_data] répété, terminé par [0x00000000]
+- Debugging ClamAV :
+  - Variables d'environnement : CLAMD_LOG_LEVEL=debug, CLAMD_LOG_FILE=/var/log/clamav/clamd.log
+  - Consulter les logs : `docker compose logs -f clamav`
 - Dans docker-compose l'exemple crée 2 réplicas :
   - deploy.replicas: 2
   - Vous pouvez augmenter ou diminuer le nombre d'instances ClamAV (ou utiliser `docker compose up --scale clamav=N`).
-
-### Exemple d'usage Avancé
-
-- Lancer plusieurs instances du scanner (par ex. pour paraléliser via Kafka consumer group) :
-  - docker compose up --scale scanner=3 -d
 
 ## Lancer avec Docker Compose
 
@@ -213,14 +219,23 @@ docker compose up --build -d
 Pour exécuter plusieurs instances du scanner (parallélisation via Kafka consumer group) :
 
 ```bash
-docker compose up --build -d
-docker compose up --scale scanner=3 -d
+docker compose up --build --scale scanner=3 -d
 ```
 
 Remarques :
 
 - Docker Compose génère des noms de conteneur uniques (project_service_1, project_service_2...). On ne peut pas assigner le même container_name à plusieurs instances.
 - Pour un déploiement déclaratif avec réplication (Swarm), utilisez `deploy.replicas` et `docker stack deploy`.
+
+### Développement avec docker-compose-dev.yaml
+
+Un fichier `docker-compose-dev.yaml` est fourni pour développement local :
+
+```bash
+docker compose -f docker-compose-dev.yaml up -d
+```
+
+Il expose les services sur l'interface hôte (Kafka, MinIO, ClamAV) pour permettre un accès direct depuis votre machine de développement.
 
 ## Lancer le scanner localement (développement)
 
@@ -230,64 +245,86 @@ Remarques :
    . .venv/bin/activate
    pip install -r requirements.txt  # si requirements disponible
    ```
-2. Exporter les variables d'environnement requises et lancer :
+2. Exporter les variables d'environnement requises et lancer le runtime :
+
    ```bash
-   export KAFKA_SERVERS=kafka:9092
-   export CLAMD_HOSTS="clamav1:3310,clamav2:3310"
+   export KAFKA_SERVERS=192.168.1.1:9092
+   export CLAMD_HOSTS="192.168.1.1:3310"
+   export S3_ENDPOINT_URL=http://192.168.1.1:9000
    # autres variables...
-   python3 app/main.py
+   python3 app/runtime.py
+   ```
+
+3. Lancer l'API REST (optionnel, dans un autre terminal) :
+   ```bash
+   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
 ## Utilisation de l'API
 
 Le service expose une API HTTP via FastAPI (port mappé 8000 par défaut). La documentation interactive (Swagger UI) et le schéma OpenAPI sont accessibles après démarrage :
 
-- Swagger UI : http://localhost:8000/docs
-- OpenAPI JSON : http://localhost:8000/openapi.json
+- Swagger UI : http://localhost:8000/api/docs
+- OpenAPI JSON : http://localhost:8000/api/openapi.json
 
 Endpoints exposés (implémentation actuelle)
 
-- POST /upload
+- POST /api/upload
   - Description : téléverse un fichier (multipart/form-data) vers le bucket configuré (S3_BUCKET, par défaut `scans`) et publie une demande de scan sur le topic Kafka d'entrée.
   - Form-data :
     - file : le fichier à téléverser
   - Réponse : objet KafkaMessage (JSON) contenant au minimum : id, status, bucket, key, original_filename.
   - Exemple curl :
-    curl -X POST "http://localhost:8000/upload" -F "file=@./sample.pdf"
+    ```bash
+    curl -X POST "http://localhost:8000/api/upload" -F "file=@./sample.pdf"
+    ```
   - Comportement : le fichier est stocké dans S3 sous une clé unique (uuid_filename). Une entrée est publiée sur KAFKA_INPUT_TOPIC pour déclencher le scan par le worker.
 
-- GET /result/{id}
+- GET /api/status/{id}
   - Description : récupère le résultat de scan pour l'identifiant fourni.
   - Paramètres :
     - id : identifiant (UUID) renvoyé par l'upload (ou par l'appel qui publie la demande).
-  - Réponse : ScanResult (JSON). Exemple de structure :
+  - Réponse : ScanResponse (JSON). Exemple de structure :
+    ```json
     {
-    "id": "123",
-    "bucket": "scans",
-    "key": "processed/sample.pdf",
-    "status": "PENDING" | "CLEAN" | "INFECTED" | "ERROR",
-    "virus": null | "NameOfVirus",
-    "details": "",
-    "timestamp": "2025-11-29T12:34:56Z",
-    "duration": 1.234,
-    "worker": "worker-1",
-    "original_filename": "sample.pdf",
-    "instance": "clamav1:3310",
-    "analyse": 0.123
+      "id": "123",
+      "bucket": "scans",
+      "key": "processed/sample.pdf",
+      "status": "PENDING" | "CLEAN" | "INFECTED" | "ERROR",
+      "virus": null | "NameOfVirus",
+      "details": "",
+      "timestamp": "2025-12-03T12:34:56Z",
+      "duration": 1.234,
+      "worker": "worker-1",
+      "original_filename": "sample.pdf",
+      "instance": "clamav1:3310",
+      "analyse": 0.123
     }
+    ```
   - Exemple curl :
-    curl "http://localhost:8000/result/1234-uuid"
-
+    ```bash
+    curl "http://localhost:8000/api/status/1234-uuid"
+    ```
   - Remarque : l'API cherche le résultat sur le topic Kafka de sortie en créant un consumer temporaire. Le délai d'attente est contrôlé par la variable d'environnement SEARCH_TIMEOUT (par défaut 5s). Si le résultat n'est pas encore disponible, l'endpoint peut renvoyer une erreur indiquant que le résultat n'est pas prêt.
 
-- GET /download/{id}
+- GET /api/download/{id}
   - Description : télécharge le fichier scanné correspondant à l'id si le statut est CLEAN ou si `force=true`.
   - Paramètres :
     - id : identifiant du scan
     - force (query, optionnel) : true|false (si true, permet de télécharger même si INFECTED)
   - Réponse : StreamingResponse avec le contenu du fichier et header Content-Disposition.
   - Exemple curl (télécharger et sauvegarder localement) :
-    curl -L -o sample.pdf "http://localhost:8000/download/1234-uuid?force=true"
+    ```bash
+    curl -L -o sample.pdf "http://localhost:8000/api/download/1234-uuid?force=true"
+    ```
+
+- GET /api/heartbeat
+  - Description : endpoint de santé pour vérifier que le service est opérationnel.
+  - Réponse : HTTP 204 No Content si ok.
+  - Exemple curl :
+    ```bash
+    curl "http://localhost:8000/api/heartbeat"
+    ```
 
 Notes opérationnelles
 
@@ -296,28 +333,25 @@ Notes opérationnelles
 - Stockage : S3/MiniO est configuré via S3_ENDPOINT_URL, S3_ACCESS_KEY, S3_SECRET_KEY, et S3_BUCKET.
 - Timeouts / retry : la recherche de résultat dans /result/{id} utilise un consumer Kafka temporaire avec un timeout (SEARCH_TIMEOUT).
 
-## Multi-ClamAV et scalabilité
+## Architecture et flux de traitement
 
-But : permettre à plusieurs moteurs ClamAV de traiter la file Kafka en parallèle.
+### Flux upload via API
 
-- Fournir la liste de daemons ClamAV via CLAMD_HOSTS.
-- Le scanner (scanner_multi.py) itère sur cette liste et retente les connexions en cas d'échec.
-- Lancer plusieurs réplicas du service scanner pour paralléliser le traitement : Kafka répartira les messages entre instances du même groupe de consommateurs.
+1. Client upload un fichier via `POST /api/upload`
+2. Le fichier est stocké dans S3 (bucket `scans`)
+3. L'API publie un message sur KAFKA_INPUT_TOPIC
+4. Le worker (runtime.py) consomme le message Kafka
+5. Le worker récupère le fichier depuis S3 et le scanne via ClamAV
+6. Le résultat est publié sur KAFKA_OUTPUT_TOPIC
+7. Client interroge `GET /api/status/{id}` pour récupérer le résultat
+8. Si CLEAN, le fichier est déplacé vers `processed/`. Si INFECTED, vers `quarantine/`.
 
-## wait_and_start.sh
+### Flux via MinIO event notification
 
-Le script `app/wait_and_start.sh` est fourni pour attendre la disponibilité de dépendances avant de lancer le scanner (utile en développement ou comme entrypoint). Exemple d'utilisation dans Dockerfile / docker-compose :
+1. Client dépose un fichier directement dans le bucket MinIO
+2. MinIO émet un événement vers Kafka (configuré via MINIO*NOTIFY_KAFKA*\*)
+3. Les étapes 4-8 sont identiques au flux API
 
-```bash
-sh app/wait_and_start.sh kafka:9092 minio:9000 clamav:3310 -- python3 app/main.py
-```
+### Équilibrage de charge
 
-(Le script attendra les endpoints donnés puis exécutera la commande passée.)
-
-## Contribuer
-
-Contributions bienvenues. Voir `CONTRIBUTING.md`.
-
-## Licence
-
-MIT — voir fichier LICENSE pour détails.
+Le monitor.py implémente un \*\*algorithme d'équilibrage adap
