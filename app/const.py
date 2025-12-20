@@ -5,7 +5,7 @@ import os
 from helpers import parse_hosts
 
 # General configuration
-BASE_DELAY = float(os.getenv("BASE_DELAY", 20))
+DELAY = float(os.getenv("DELAY", 20))  # seconds
 LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))

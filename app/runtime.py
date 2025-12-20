@@ -12,9 +12,9 @@ from clamav import (
     ClamAVScanner,
 )
 from const import (
-    BASE_DELAY,
     CLAMD_CNX_TIMEOUT,
     CLAMD_HOSTS,
+    DELAY,
     KAFKA_LOG_RETENTION_MS,
     KAFKA_SASL_MECHANISM,
     KAFKA_SASL_PASSWORD,
@@ -72,7 +72,7 @@ def _ssl_context():
 @retry(
     exceptions=(S3BucketKeyException, S3LockException, S3MoveException),
     tries=RETRY,
-    delay=BASE_DELAY,
+    delay=DELAY,
     logger=logger,
 )
 async def worker(

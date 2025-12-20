@@ -6,7 +6,7 @@ from typing import Any
 from aiobotocore.session import ClientCreatorContext, get_session
 from aiohttp import ClientSession
 from clamav import ClamAVScanner, ClamAVSendException
-from const import BASE_DELAY, RETRY
+from const import DELAY, RETRY
 from helpers import retry
 from models import ClamAVResult, ScanResponse
 from mylogging import mylogging
@@ -120,7 +120,7 @@ class S3Storage:
     @retry(
         exceptions=(ClamAVSendException, S3GetObjectException),
         tries=RETRY,
-        delay=BASE_DELAY,
+        delay=DELAY,
         logger=logger,
     )
     async def async_scan_s3_object(
@@ -141,7 +141,7 @@ class S3Storage:
                 # scan with clamav
                 return await clamav.async_scan(key, bucket, body)
 
-    @retry(tries=RETRY, delay=BASE_DELAY, logger=logger)
+    @retry(tries=RETRY, delay=DELAY, logger=logger)
     async def async_call_webhook(self, key: str, url: str, payload: dict):
         async with ClientSession(raise_for_status=True) as session:
             logger.info("Calling webhook %s", key)

@@ -96,7 +96,7 @@ Remarque : certaines valeurs sont spécifiques à l'image Kafka et à sa configu
 - RETRY
   - Description : nombre de tentatives (sur différents hosts) avant d'abandonner le scan.
   - Exemple : 3
-- BASE_DELAY
+- DELAY
   - Description : délai de base (secondes) utilisé pour backoff exponentiel entre tentatives.
   - Exemple : 0.5
 
