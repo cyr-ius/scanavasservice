@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Metadata(BaseModel):
@@ -15,7 +15,7 @@ class MessageBase(BaseModel):
     key: str
     bucket: str
     status: Literal["ERROR", "PENDING", "CLEAN", "INFECTED", "ERROR"] = "PENDING"
-    timestamp: datetime = datetime.now()
+    timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class ClamAVResult(MessageBase):
