@@ -1,5 +1,6 @@
 """Class for managment S3 storage."""
 
+import re
 import time
 from typing import Any
 
@@ -160,7 +161,7 @@ class S3Storage:
             if len(tags) > 10:
                 raise S3StorageException("Too many tags exceeded (max:10)")
             taggins = [
-                {"Key": str(k), "Value": str(v)}
+                {"Key": sanitize_tag_key(k), "Value": sanitize_tag_value(v)}
                 for k, v in tags.items()
                 if v is not None
             ]
@@ -180,3 +181,34 @@ class S3Storage:
                 return key, bucket
 
         raise S3BucketKeyException("Unable to determine the bucket and object key.")
+
+
+def sanitize_tag_value(value: Any, max_length: int = 256) -> str:
+    """Sanitize S3 tag value according to AWS constraints."""
+    # Convert to string
+    text = str(value)
+
+    # Remove invalid characters (keep only allowed: alphanumeric, space, +, -, =, ., _, :, /, @)
+    text = re.sub(r"[^a-zA-Z0-9\s+\-=._:/@]", "", text)
+
+    # Remove newlines, tabs, and control characters
+    text = re.sub(r"[\n\r\t\x00-\x1F]", "", text)
+
+    # Truncate to max length
+    if len(text) > max_length:
+        text = text[:max_length]
+
+    # If empty after sanitization, use default
+    return text or "unknown"
+
+
+def sanitize_tag_key(value: str, max_length: int = 128) -> str:
+    """Sanitize S3 tag key according to AWS constraints."""
+    text = str(value).lower()
+    text = re.sub(r"[^a-z0-9\s+\-=._:/@]", "", text)
+    text = re.sub(r"[\n\r\t\x00-\x1F]", "", text)
+
+    if len(text) > max_length:
+        text = text[:max_length]
+
+    return text or "unknown"

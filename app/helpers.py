@@ -4,7 +4,6 @@ import asyncio
 import functools
 import logging
 import random
-import re
 import unicodedata
 from collections.abc import Callable
 from typing import Any
@@ -16,44 +15,6 @@ def normalize_ascii(value: str) -> str:
     return (
         unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     )
-
-
-def truncate_string(text: str, max_length: int = 64) -> str:
-    """Truncate string to max_length and add ellipsis."""
-    if len(text) > max_length:
-        return text[:max_length] + "..."
-    return text
-
-
-def sanitize_tag_value(value: Any, max_length: int = 256) -> str:
-    """Sanitize S3 tag value according to AWS constraints."""
-    # Convert to string
-    text = str(value)
-
-    # Remove invalid characters (keep only allowed: alphanumeric, space, +, -, =, ., _, :, /, @)
-    text = re.sub(r"[^a-zA-Z0-9\s+\-=._:/@]", "", text)
-
-    # Remove newlines, tabs, and control characters
-    text = re.sub(r"[\n\r\t\x00-\x1F]", "", text)
-
-    # Truncate to max length
-    if len(text) > max_length:
-        text = text[:max_length]
-
-    # If empty after sanitization, use default
-    return text or "unknown"
-
-
-def sanitize_tag_key(value: str, max_length: int = 128) -> str:
-    """Sanitize S3 tag key according to AWS constraints."""
-    text = str(value).lower()
-    text = re.sub(r"[^a-z0-9\s+\-=._:/@]", "", text)
-    text = re.sub(r"[\n\r\t\x00-\x1F]", "", text)
-
-    if len(text) > max_length:
-        text = text[:max_length]
-
-    return text or "unknown"
 
 
 def parse_hosts(s: str, port: int = 3310) -> list[tuple[str, int]]:
