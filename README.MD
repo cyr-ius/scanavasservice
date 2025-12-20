@@ -63,7 +63,7 @@ Remarque : certaines valeurs sont spécifiques à l'image Kafka et à sa configu
 - KAFKA_SERVERS
   - Description : adresse bootstrap du broker Kafka.
   - Exemple : kafka:9092
-- KAFKA_INPUT_TOPIC
+- KAFKA_TOPIC
   - Description : topic Kafka d'entrée (messages de fichiers à scanner).
   - Exemple : files_to_scan
 - KAFKA_OUTPUT_TOPIC
@@ -278,7 +278,7 @@ Endpoints exposés (implémentation actuelle)
     ```bash
     curl -X POST "http://localhost:8000/api/upload" -F "file=@./sample.pdf"
     ```
-  - Comportement : le fichier est stocké dans S3 sous une clé unique (uuid_filename). Une entrée est publiée sur KAFKA_INPUT_TOPIC pour déclencher le scan par le worker.
+  - Comportement : le fichier est stocké dans S3 sous une clé unique (uuid_filename). Une entrée est publiée sur KAFKA_TOPIC pour déclencher le scan par le worker.
 
 - GET /api/status/{id}
   - Description : récupère le résultat de scan pour l'identifiant fourni.
@@ -332,7 +332,7 @@ Endpoints exposés (implémentation actuelle)
 
 1. Client upload un fichier via `POST /api/upload`
 2. Le fichier est stocké dans S3 (bucket `scans`)
-3. L'API publie un message sur KAFKA_INPUT_TOPIC
+3. L'API publie un message sur KAFKA_TOPIC
 4. Le worker (runtime.py) consomme le message Kafka
 5. Le worker récupère le fichier depuis S3 et le scanne via ClamAV
 6. Le résultat est inscrit dans des Tags sur le fichier

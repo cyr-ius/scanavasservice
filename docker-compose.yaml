@@ -82,7 +82,7 @@ services:
       CLAMD_HOSTS: scanasservice-clamav-1:3310,scanasservice-clamav-2:3310
       CLIENT_ID: test
       CLIENT_SECRET: test
-      KAFKA_INPUT_TOPIC: files_to_scan
+      KAFKA_TOPIC: files_to_scan
       KAFKA_SERVERS: kafka:9092
       LOG_LEVEL: INFO
       MAX_CONCURRENT_SCANS: 8
