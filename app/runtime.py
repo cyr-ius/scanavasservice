@@ -109,14 +109,10 @@ async def worker(
         await storage.async_move_s3_object(key, bucket, target, result)
         logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
 
-        await producer.send_and_wait(
-            KAFKA_TOPIC, value=result.model_dump_json().encode("utf-8")
-        )
+        await producer.send_and_wait(KAFKA_TOPIC, value=result.model_dump_json())
         await producer.send_and_wait(
             KAFKAT_STATS,
-            value=json.dumps(
-                {**clamav.statistics, "monitor": monitor.statistics}
-            ).encode("utf-8"),
+            value=json.dumps({**clamav.statistics, "monitor": monitor.statistics}),
         )
 
         # Fire webhook if present
@@ -137,13 +133,15 @@ async def consume_loop(
 ):
     """Consume Kafka messages and schedule scans."""
 
-    consumer = AIOKafkaConsumer(KAFKA_TOPIC, **kafka_params())
+    consumer = AIOKafkaConsumer(
+        KAFKA_TOPIC, **kafka_params(), value_deserializer=lambda v: v.decode("utf-8")
+    )
     await consumer.start()
     try:
         async for msg in consumer:
             if not msg.value:
                 continue
-            payload = json.loads(msg.value.decode("utf-8"))
+            payload = json.loads(msg.value)
             logger.debug("Kafka payload: %s", payload)
             for record in payload.get("Records", []):
                 if record.get("eventName") == "s3:ObjectCreated:Put":
@@ -182,7 +180,9 @@ async def main():
     clamav = ClamAVScanner(monitor)
     storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
 
-    producer = AIOKafkaProducer(**kafka_params())
+    producer = AIOKafkaProducer(
+        **kafka_params(), value_serializer=lambda v: v.encode("utf-8")
+    )
     await producer.start()
 
     asyncio.create_task(monitor.reset_host_failures_periodically())
