@@ -191,9 +191,10 @@ async def scan_status(key: str) -> ScanResponse:
 
     async with s3_client_ctx() as s3_client:
         tags = {}
+        orig_key = key
         for item in [S3_BUCKET, S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
             if item in [S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
-                key = f"{item}/{key}"
+                key = f"{item}/{orig_key}"
             try:
                 obj = await s3_client.head_object(Bucket=S3_BUCKET, Key=key)
             except Exception:
