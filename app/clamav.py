@@ -124,20 +124,15 @@ class ClamAVScanner:
 
                 logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
 
-                writer.close()
-                await writer.wait_closed()
             except asyncio.TimeoutError as e:
-                await close_writer()
                 raise ClamAVTimeoutException(
                     f"[clamd-response-timeout-{key}] {e}"
                 ) from e
             except Exception as e:
-                await close_writer()
                 raise ClamAVResponseException(
                     f"[clamd-response-error-{key}] {e}"
                 ) from e
-
-            else:
+            finally:
                 await close_writer()
 
             # Parse response
