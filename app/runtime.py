@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
 import asyncio
 import json
-import ssl
 import time
 from collections.abc import Awaitable
 from typing import Any
 
+from aiohttp import ClientSession
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from clamav import (
     ClamAVResult,
     ClamAVScanner,
 )
 from const import (
-    CLAMD_CNX_TIMEOUT,
     CLAMD_HOSTS,
     DELAY,
     KAFKA_LOG_RETENTION_MS,
-    KAFKA_SASL_MECHANISM,
-    KAFKA_SASL_PASSWORD,
-    KAFKA_SASL_USERNAME,
-    KAFKA_SECURITY_PROTOCOL,
-    KAFKA_SERVERS,
     KAFKA_TOPIC,
     KAFKAT_STATS,
     MAX_CONCURRENT_SCANS,
@@ -31,14 +25,13 @@ from const import (
     S3_SCAN_QUARANTINE,
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
-    SSL_CHECK_HOSTNAME,
-    SSL_VERIFY_MODE,
 )
 from helpers import retry
 from models import ScanResponse
 from monitor import Monitor
 from mylogging import mylogging
 from storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
+from utils import kafka_params
 
 logger = mylogging.getLogger("scanav")
 
@@ -59,13 +52,12 @@ def fire_and_forget(coro: Awaitable[None]):
     asyncio.create_task(wrapper())
 
 
-def _ssl_context():
-    """Create SSL context for Kafka connections if needed."""
-
-    context = ssl.create_default_context()
-    context.check_hostname = SSL_CHECK_HOSTNAME
-    context.verify_mode = ssl.CERT_REQUIRED if SSL_VERIFY_MODE else ssl.CERT_NONE
-    return context
+@retry(tries=RETRY, delay=DELAY, logger=logger)
+async def async_call_webhook(key: str, url: str, payload: dict):
+    async with ClientSession(raise_for_status=True) as session:
+        logger.info("Calling webhook %s", key)
+        async with session.post(url, json=payload):
+            logger.info(f"Webhook {url} successfully called for file {key}")
 
 
 # ----------------- WORKER -----------------
@@ -99,7 +91,7 @@ async def worker(
         except Exception as e:
             logger.error(f"[worker-{worker_id}] {e}")
             scan = ClamAVResult(
-                key=key, bucket=bucket, status="ERROR", infos="ClamAV error", analyse=0
+                key=key, bucket=bucket, status="ERROR", infos="ClamAV error"
             )
 
         # Move object based on scan result
@@ -130,9 +122,7 @@ async def worker(
             and (url := metadata.get("webhook"))
             and scan is not None
         ):
-            fire_and_forget(
-                storage.async_call_webhook(target, url, result.model_dump_json())
-            )
+            fire_and_forget(async_call_webhook(target, url, result.model_dump()))
 
 
 # ----------------- CONSUMER -----------------
@@ -142,29 +132,7 @@ async def consume_loop(
     monitor: Monitor,
     clamav: ClamAVScanner,
 ):
-    if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
-        security_protocol = KAFKA_SECURITY_PROTOCOL
-        sasl_mechanism = KAFKA_SASL_MECHANISM
-        sasl_plain_username = KAFKA_SASL_USERNAME
-        sasl_plain_password = KAFKA_SASL_PASSWORD
-    else:
-        security_protocol = "PLAINTEXT"
-        sasl_mechanism = None
-        sasl_plain_username = None
-        sasl_plain_password = None
-
-    consumer = AIOKafkaConsumer(
-        KAFKA_TOPIC,
-        bootstrap_servers=KAFKA_SERVERS,  # type: ignore
-        group_id="scanner-group",
-        enable_auto_commit=True,
-        security_protocol=security_protocol,
-        sasl_mechanism=sasl_mechanism,  # type: ignore
-        sasl_plain_username=sasl_plain_username,
-        sasl_plain_password=sasl_plain_password,
-        auto_offset_reset="latest",
-        ssl_context=_ssl_context(),
-    )
+    consumer = AIOKafkaConsumer(KAFKA_TOPIC, **kafka_params())
     await consumer.start()
     try:
         async for msg in consumer:
@@ -205,33 +173,10 @@ async def periodic_cleanup_task(storage: S3Storage) -> None:
 # ----------------- MAIN -----------------
 async def main():
     monitor = Monitor(CLAMD_HOSTS)
-    storage = S3Storage(
-        S3_ENDPOINT,
-        S3_ACCESS_KEY,
-        S3_SECRET_KEY,
-        CLAMD_CNX_TIMEOUT,
-    )
     clamav = ClamAVScanner(monitor)
+    storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
 
-    if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
-        security_protocol = KAFKA_SECURITY_PROTOCOL
-        sasl_mechanism = KAFKA_SASL_MECHANISM
-        sasl_plain_username = KAFKA_SASL_USERNAME
-        sasl_plain_password = KAFKA_SASL_PASSWORD
-    else:
-        security_protocol = "PLAINTEXT"
-        sasl_mechanism = None
-        sasl_plain_username = None
-        sasl_plain_password = None
-
-    producer = AIOKafkaProducer(
-        bootstrap_servers=KAFKA_SERVERS,  # type: ignore
-        security_protocol=security_protocol,
-        sasl_mechanism=sasl_mechanism,  # type: ignore
-        sasl_plain_username=sasl_plain_username,
-        sasl_plain_password=sasl_plain_password,
-        ssl_context=_ssl_context(),
-    )
+    producer = AIOKafkaProducer(**kafka_params())
     await producer.start()
 
     asyncio.create_task(monitor.reset_host_failures_periodically())

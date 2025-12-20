@@ -1,6 +1,5 @@
 # main.py
 import json
-import ssl
 import uuid
 from contextlib import asynccontextmanager
 
@@ -12,11 +11,6 @@ from const import (
     CLIENT_ID,
     CLIENT_SCOPES,
     CLIENT_SECRET,
-    KAFKA_SASL_MECHANISM,
-    KAFKA_SASL_PASSWORD,
-    KAFKA_SASL_USERNAME,
-    KAFKA_SECURITY_PROTOCOL,
-    KAFKA_SERVERS,
     KAFKAT_STATS,
     S3_ACCESS_KEY,
     S3_BUCKET,
@@ -24,8 +18,6 @@ from const import (
     S3_SCAN_QUARANTINE,
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
-    SSL_CHECK_HOSTNAME,
-    SSL_VERIFY_MODE,
     VERSION,
 )
 from depends import protected
@@ -33,9 +25,10 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile, stat
 from fastapi.params import Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from helpers import normalize_ascii
-from models import BucketResponse, ErrorResponse, ScanResponse, UploadResponse
+from models import BucketResponse, ErrorResponse, ScanResponse
 from mylogging import mylogging
 from pydantic import HttpUrl, ValidationError
+from utils import kafka_params
 
 logger = mylogging.getLogger("api")
 session = get_session()
@@ -95,7 +88,7 @@ v1_router = APIRouter(prefix="/v1")
 )
 async def upload_file_to_scan(
     file: UploadFile, url: HttpUrl | None = None
-) -> UploadResponse:
+) -> ScanResponse:
     """Upload file to S3 and send scan request to Kafka."""
     key = str(uuid.uuid4())
     data = await file.read()
@@ -104,14 +97,14 @@ async def upload_file_to_scan(
             status_code=503, detail="Webhook url: length exceeded (max: 128)"
         )
     try:
-        async with s3_client_ctx() as client:  # type: ignore
+        async with s3_client_ctx() as client:
             if filename := file.filename:
                 metadata = {"OriginalFilename": normalize_ascii(filename)}
-                if url is not None:
+                if url:
                     metadata = {**metadata, "Webhook": str(url)}
                 await client.put_object(
                     Bucket=S3_BUCKET, Key=key, Body=data, Metadata=metadata
-                )  # type: ignore
+                )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -124,11 +117,10 @@ async def upload_file_to_scan(
             detail=f"Storage unavailable: {e}",
         )
 
-    return UploadResponse(
+    return ScanResponse(
         key=key,
         bucket=S3_BUCKET,
-        status="PENDING",
-        webhook=str(url),
+        webhook=str(url) if url else None,
         originalfilename=file.filename,
     )
 
@@ -164,7 +156,7 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
     try:
         # Use s3_client_ctx
         async with s3_client_ctx() as s3_client:
-            obj_meta = await s3_client.head_object(Bucket=S3_BUCKET, Key=result.key)  # type: ignore
+            obj_meta = await s3_client.head_object(Bucket=S3_BUCKET, Key=result.key)
             filename = obj_meta.get("Metadata", {}).get(
                 "originalfilename", "unknown_name"
             )
@@ -203,13 +195,13 @@ async def scan_status(key: str) -> ScanResponse:
             if item in [S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
                 key = f"{item}/{key}"
             try:
-                obj = await s3_client.head_object(Bucket=S3_BUCKET, Key=key)  # type: ignore
+                obj = await s3_client.head_object(Bucket=S3_BUCKET, Key=key)
             except Exception:
                 obj = None
 
             if obj:
                 metadata = obj.get("Metadata", {})
-                obj_tags = await s3_client.get_object_tagging(Bucket=S3_BUCKET, Key=key)  # type: ignore
+                obj_tags = await s3_client.get_object_tagging(Bucket=S3_BUCKET, Key=key)
                 tags = {t["Key"]: t["Value"] for t in obj_tags.get("TagSet", [])}
 
                 return ScanResponse(
@@ -255,16 +247,16 @@ async def bucket_status() -> list[BucketResponse]:
     try:
         async with s3_client_ctx() as s3_client:
             paginator = s3_client.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=S3_BUCKET):  # type: ignore
+            async for page in paginator.paginate(Bucket=S3_BUCKET):
                 for obj in page.get("Contents", []):
                     obj = {str(k).lower(): v for k, v in obj.items()}
                     key = obj["key"]
-                    metadata = (await s3_client.head_object(Bucket=S3_BUCKET, Key=key))[  # type: ignore
+                    metadata = (await s3_client.head_object(Bucket=S3_BUCKET, Key=key))[
                         "Metadata"
                     ]
                     tagset = await s3_client.get_object_tagging(
                         Bucket=S3_BUCKET, Key=key
-                    )  # type: ignore
+                    )
                     tags = {t["Key"]: t["Value"] for t in tagset["TagSet"]}
                     result.append(
                         BucketResponse(bucket=S3_BUCKET, **obj, **metadata, **tags)
@@ -280,8 +272,8 @@ async def bucket_status() -> list[BucketResponse]:
 
 async def s3_object_stream(bucket: str, key: str):
     """Stream S3 object."""
-    async with s3_client_ctx() as s3_client:  # type: ignore
-        resp = await s3_client.get_object(Bucket=bucket, Key=key)  # type: ignore
+    async with s3_client_ctx() as s3_client:
+        resp = await s3_client.get_object(Bucket=bucket, Key=key)
         body = resp["Body"]
         try:
             async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
@@ -296,39 +288,14 @@ async def s3_object_stream(bucket: str, key: str):
                 pass
 
 
-def _ssl_context():
-    """Create SSL context for Kafka connections if needed."""
-
-    context = ssl.create_default_context()
-    context.check_hostname = SSL_CHECK_HOSTNAME
-    context.verify_mode = ssl.CERT_REQUIRED if SSL_VERIFY_MODE else ssl.CERT_NONE
-    return context
-
-
 async def get_last_message() -> dict | None:
     """Get last message from Kafka topic."""
 
-    if KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD:
-        security_protocol = KAFKA_SECURITY_PROTOCOL
-        sasl_mechanism = KAFKA_SASL_MECHANISM
-        sasl_plain_username = KAFKA_SASL_USERNAME
-        sasl_plain_password = KAFKA_SASL_PASSWORD
-    else:
-        security_protocol = "PLAINTEXT"
-        sasl_mechanism = None
-        sasl_plain_username = None
-        sasl_plain_password = None
-
     consumer = AIOKafkaConsumer(
-        bootstrap_servers=KAFKA_SERVERS,  # type: ignore
+        **kafka_params(),
         enable_auto_commit=False,  # ne jamais avancer l'offset
         auto_offset_reset="latest",  # démarrer au dernier offset
         group_id=f"api-tracker-{uuid.uuid4()}",
-        security_protocol=security_protocol,
-        sasl_mechanism=sasl_mechanism,  # type: ignore
-        sasl_plain_username=sasl_plain_username,
-        sasl_plain_password=sasl_plain_password,
-        ssl_context=_ssl_context(),
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
     )
     await consumer.start()
