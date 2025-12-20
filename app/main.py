@@ -1,17 +1,13 @@
 # main.py
+import asyncio
 import json
 import uuid
-from contextlib import asynccontextmanager
+from typing import Annotated, Literal
 
-from aiobotocore.session import get_session
-from aiokafka import AIOKafkaConsumer
-from aiokafka.structs import TopicPartition
 from const import (
-    CLAMD_CHUNK_SIZE,
     CLIENT_ID,
     CLIENT_SCOPES,
     CLIENT_SECRET,
-    KAFKAT_STATS,
     S3_ACCESS_KEY,
     S3_BUCKET,
     S3_ENDPOINT,
@@ -27,30 +23,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from helpers import normalize_ascii
 from models import BucketResponse, ErrorResponse, ScanResponse
 from mylogging import mylogging
-from pydantic import HttpUrl, ValidationError
-from utils import kafka_params
+from pydantic import Field, HttpUrl, ValidationError
+from storage import S3Storage
 
 logger = mylogging.getLogger("api")
-session = get_session()
-
-
-# Create a reusable asynccontextmanager for S3 client to ensure proper close
-@asynccontextmanager
-async def s3_client_ctx():
-    """Async context manager for S3 client."""
-    client = await session.create_client(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=S3_ACCESS_KEY,
-        aws_secret_access_key=S3_SECRET_KEY,
-    ).__aenter__()
-    try:
-        yield client
-    finally:
-        try:
-            await client.__aexit__(None, None, None)
-        except Exception as e:
-            logger.debug("Error closing s3 client: %s", e)
+storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
 
 
 app = FastAPI(
@@ -79,7 +56,6 @@ v1_router = APIRouter(prefix="/v1")
 @v1_router.post(
     "/upload",
     dependencies=[Depends(protected)],
-    tags=["av"],
     responses={
         400: {"model": ErrorResponse, "description": "Bad Request"},
         422: {"model": ErrorResponse, "description": "Validation Error"},
@@ -87,29 +63,27 @@ v1_router = APIRouter(prefix="/v1")
     },
 )
 async def upload_file_to_scan(
-    file: UploadFile, url: HttpUrl | None = None
+    file: UploadFile,
+    webhook: Annotated[HttpUrl | None, Field(HttpUrl, max_length=128)] = None,
 ) -> ScanResponse:
     """Upload file to S3 and send scan request to Kafka."""
     key = str(uuid.uuid4())
     data = await file.read()
-    if url and len(url) > 128:
+    if webhook and len(webhook) > 128:
         raise HTTPException(
             status_code=503, detail="Webhook url: length exceeded (max: 128)"
         )
     try:
-        async with s3_client_ctx() as client:
-            if filename := file.filename:
-                metadata = {"OriginalFilename": normalize_ascii(filename)}
-                if url:
-                    metadata = {**metadata, "Webhook": str(url)}
-                await client.put_object(
-                    Bucket=S3_BUCKET, Key=key, Body=data, Metadata=metadata
-                )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Filename is required",
-                )
+        if filename := file.filename:
+            metadata = {"OriginalFilename": normalize_ascii(filename)}
+            if webhook:
+                metadata = {**metadata, "Webhook": str(webhook)}
+            await storage.astnc_create_s3_file(key, S3_BUCKET, metadata, data)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Filename is required",
+            )
     except Exception as e:
         logger.exception("S3 put_object failed")
         raise HTTPException(
@@ -120,7 +94,7 @@ async def upload_file_to_scan(
     return ScanResponse(
         key=key,
         bucket=S3_BUCKET,
-        webhook=str(url) if url else None,
+        webhook=str(webhook) if webhook else None,
         originalfilename=file.filename,
     )
 
@@ -128,7 +102,6 @@ async def upload_file_to_scan(
 @v1_router.get(
     "/download/{key}",
     dependencies=[Depends(protected)],
-    tags=["av"],
     responses={
         200: {
             "description": "File downloaded successfully",
@@ -154,16 +127,12 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
         )
 
     try:
-        # Use s3_client_ctx
-        async with s3_client_ctx() as s3_client:
-            obj_meta = await s3_client.head_object(Bucket=S3_BUCKET, Key=result.key)
-            filename = obj_meta.get("Metadata", {}).get(
-                "originalfilename", "unknown_name"
-            )
+        metadata = await storage.async_get_s3_metadata(result.key, S3_BUCKET)
+        filename = metadata.get("originalfilename", "unknown_name")
 
         headers = {"Content-Disposition": f"attachment; filename={filename}"}
         return StreamingResponse(
-            s3_object_stream(S3_BUCKET, result.key),
+            storage.async_stream_s3_file(result.key, S3_BUCKET),
             media_type="application/octet-stream",
             headers=headers,
         )
@@ -179,7 +148,6 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
 @v1_router.get(
     "/status/{key}",
     dependencies=[Depends(protected)],
-    tags=["av"],
     responses={
         404: {"model": ErrorResponse, "description": "File not found"},
         422: {"model": ErrorResponse, "description": "Validation Error"},
@@ -189,36 +157,27 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
 async def scan_status(key: str) -> ScanResponse:
     """Fetch scan result by ID."""
 
-    async with s3_client_ctx() as s3_client:
-        tags = {}
-        orig_key = key
-        for item in [S3_BUCKET, S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
-            if item in [S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
-                key = f"{item}/{orig_key}"
-            try:
-                obj = await s3_client.head_object(Bucket=S3_BUCKET, Key=key)
-            except Exception:
-                obj = None
+    tags = {}
+    orig_key = key
+    for item in [S3_BUCKET, S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
+        if item in [S3_SCAN_RESULT, S3_SCAN_QUARANTINE]:
+            key = f"{item}/{orig_key}"
 
-            if obj:
-                metadata = obj.get("Metadata", {})
-                obj_tags = await s3_client.get_object_tagging(Bucket=S3_BUCKET, Key=key)
-                tags = {t["Key"]: t["Value"] for t in obj_tags.get("TagSet", [])}
+        try:
+            metadata = await storage.async_get_s3_metadata(key, S3_BUCKET)
+            tags = await storage.async_get_s3_tags(key, S3_BUCKET)
 
-                return ScanResponse(
-                    key=key,
-                    bucket=S3_BUCKET,
-                    originalfilename=metadata.get("originalfilename"),
-                    webhook=metadata.get("webhook"),
-                    **tags,
-                )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
-        )
+            return ScanResponse(
+                key=key,
+                bucket=S3_BUCKET,
+                originalfilename=metadata.get("originalfilename"),
+                webhook=metadata.get("webhook"),
+                **tags,
+            )
+        except Exception:
+            pass
 
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Storage unavailable"
-    )
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
 
 @v1_router.get("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
@@ -227,101 +186,46 @@ async def hearbeat():
     pass
 
 
-@v1_router.get("/monitor/clamav", dependencies=[Depends(protected)])
-async def clamav_monitor():
+@v1_router.get("/monitor/{type}", dependencies=[Depends(protected)])
+async def clamav_monitor(
+    type: Literal["clamav", "bucket"],
+) -> dict | list[BucketResponse] | None:
     """Monitor loadbalancing."""
     try:
-        msg = await get_last_message()
+        if type == "clamav":
+            return await _get_last_stats_message()
+        elif type == "bucket":
+            return await storage.async_browse_s3_bucket(S3_BUCKET)
+        else:
+            raise HTTPException()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Monitor error ({e})",
         )
-    else:
-        return msg
 
 
-@v1_router.get("/monitor/bucket", dependencies=[Depends(protected)])
-async def bucket_status() -> list[BucketResponse]:
-    """Monitor loadbalancing."""
-    result = []
-    try:
-        async with s3_client_ctx() as s3_client:
-            paginator = s3_client.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=S3_BUCKET):
-                for obj in page.get("Contents", []):
-                    obj = {str(k).lower(): v for k, v in obj.items()}
-                    key = obj["key"]
-                    metadata = (await s3_client.head_object(Bucket=S3_BUCKET, Key=key))[
-                        "Metadata"
-                    ]
-                    tagset = await s3_client.get_object_tagging(
-                        Bucket=S3_BUCKET, Key=key
-                    )
-                    tags = {t["Key"]: t["Value"] for t in tagset["TagSet"]}
-                    result.append(
-                        BucketResponse(bucket=S3_BUCKET, **obj, **metadata, **tags)
-                    )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Status error ({e})",
-        )
-    else:
-        return result
-
-
-async def s3_object_stream(bucket: str, key: str):
-    """Stream S3 object."""
-    async with s3_client_ctx() as s3_client:
-        resp = await s3_client.get_object(Bucket=bucket, Key=key)
-        body = resp["Body"]
-        try:
-            async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            # assure close du body si nécessaire
-            try:
-                await body.close()
-            except Exception:
-                pass
-
-
-async def get_last_message() -> dict | None:
+async def _get_last_stats_message() -> dict | None:
     """Get last message from Kafka topic."""
+    metadata = {"lock-id": "clamav-scan-ignore"}
+    last_stats_message = {}
 
-    consumer = AIOKafkaConsumer(
-        **kafka_params(),
-        enable_auto_commit=False,  # ne jamais avancer l'offset
-        auto_offset_reset="latest",  # démarrer au dernier offset
-        group_id=f"api-tracker-{uuid.uuid4()}",
-        value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-    )
-    await consumer.start()
+    await storage.astnc_create_s3_file("stats/_last_stats", S3_BUCKET, metadata)
+    await storage.async_set_s3_tags("stats/_last_stats", S3_BUCKET, {"status": "ASKED"})
 
-    # récupérer les partitions du topic
-    partitions = consumer.partitions_for_topic(KAFKAT_STATS)
-    if not partitions:
-        await consumer.stop()
-        return None
+    async def _check():
+        tags = await storage.async_get_s3_tags("stats/_last_stats", S3_BUCKET)
+        return tags.get("status") == "ASKED"
 
-    topic_partitions = [TopicPartition(KAFKAT_STATS, p) for p in partitions]
-    consumer.assign(topic_partitions)  # assign manuel
+    while await _check() == "ASKED":
+        await asyncio.sleep(0.5)
 
-    # chercher le dernier offset et lire le dernier message
-    last_messages = []
-    for tp in topic_partitions:
-        end_offset = await consumer.end_offsets([tp])
-        last_offset = end_offset[tp] - 1
-        if last_offset >= 0:
-            consumer.seek(tp, last_offset)
-            msg = await consumer.getone()
-            last_messages.append(msg.value)
+    for msg in ["stats/monitor_stats.json", "stats/clamav_counters.json"]:
+        if content := await storage.async_get_s3_file(msg, S3_BUCKET):
+            r = json.loads(content.decode("utf-8"))
+            last_stats_message.update(r)
 
-    await consumer.stop()
-    return last_messages[-1] if last_messages else None
+    return last_stats_message
 
 
 app.include_router(v1_router)
