@@ -1,8 +1,8 @@
 import asyncio
 import time
 
-from const import CLAMD_CHUNK_SIZE, CLAMD_CNX_TIMEOUT
-from models import ClamAVResult
+from const import CLAMD_CHUNK_SIZE, CLAMD_CNX_TIMEOUT, CLAMD_HOSTS
+from models import ClamAVResult, ClamAVStatsResponse
 from monitor import Monitor
 from mylogging import mylogging
 
@@ -66,6 +66,7 @@ class ClamAVScanner:
                 timeout=float(CLAMD_CNX_TIMEOUT),
             )
         except Exception as e:
+            self._statistics["errors"] += 1
             raise ClamAVConnectException(f"clamd-conn-error:{e}") from e
 
     async def async_scan(self, key: str, bucket: str, body) -> ClamAVResult:
@@ -97,9 +98,8 @@ class ClamAVScanner:
 
         try:
             # send INSTREAM command and stream file
-            logger.debug("Sending INSTREAM to clamd %s:%d", host, port)
             try:
-                writer.write(b"nINSTREAM\0")
+                writer.write(b"nINSTREAM\n")
                 await writer.drain()
 
                 async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
@@ -111,14 +111,15 @@ class ClamAVScanner:
                 writer.write((0).to_bytes(4, "big"))
                 await writer.drain()
             except BrokenPipeError as e:
+                self._statistics["errors"] += 1
                 await close_writer()
                 raise ClamAVSizeExceeded("[clamd-size-exceeded]") from e
             except Exception as e:
+                self._statistics["errors"] += 1
                 await mark_error_and_close()
                 raise ClamAVSendException(f"[clamd-send-error] {e}") from e
 
             # read response
-            logger.debug("Waiting for clamd response for %s/%s", bucket, key)
             try:
                 resp_bytes = await asyncio.wait_for(
                     reader.read(4096), timeout=float(CLAMD_CNX_TIMEOUT)
@@ -128,11 +129,13 @@ class ClamAVScanner:
                 logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
 
             except asyncio.TimeoutError as e:
+                self._statistics["errors"] += 1
                 await close_writer()
                 raise ClamAVTimeoutException(
                     f"[clamd-response-timeout-{key}] {e}"
                 ) from e
             except Exception as e:
+                self._statistics["errors"] += 1
                 await close_writer()
                 raise ClamAVResponseException(
                     f"[clamd-response-error-{key}] {e}"
@@ -182,3 +185,23 @@ class ClamAVScanner:
             )
         finally:
             await close_writer()
+
+    async def async_stats(self) -> dict[str, ClamAVStatsResponse]:
+        """Get ClamAV STATS."""
+        response = {}
+        for host, port in CLAMD_HOSTS:
+            r, w = await self.async_connect(host, port)
+            w.write(b"zSTATS\0")
+            await w.drain()
+
+            resp_bytes = await asyncio.wait_for(
+                r.read(4096), timeout=float(CLAMD_CNX_TIMEOUT)
+            )
+            rslt = resp_bytes.decode(errors="ignore").strip()
+
+            w.close()
+            await w.wait_closed()
+            response[f"{host}:{port}"] = ClamAVStatsResponse.parse_stats(
+                rslt
+            ).model_dump()
+        return response
