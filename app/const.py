@@ -40,7 +40,7 @@ CLAMD_CNX_TIMEOUT = float(os.getenv("CLAMD_CNX_TIMEOUT", 120))
 CLAMD_HOSTS = parse_hosts(os.getenv("CLAMD_HOSTS", "clamav:3310"))
 CLAMD_CHUNK_SIZE = int(os.getenv("CLAMD_CHUNK_SIZE", 1024 * 4))
 
-# Hybrid scoring params (tweakable)
+# Monitor configuration for scan servers
 BUSY_WEIGHT = float(os.getenv("BUSY_WEIGHT", 1.0))
 FAILURE_WEIGHT = float(os.getenv("FAILURE_WEIGHT", 5.0))
 COOLDOWN_THRESHOLD = int(os.getenv("COOLDOWN_THRESHOLD", 3))  # failures before cooldown
@@ -50,7 +50,7 @@ EMA_ALPHA = float(
 )  # exponential moving average alpha for avg times
 
 
-# OIDC
+# OIDC configuration
 OIDC_ISSUER = os.getenv("OIDC_ISSUER", "")
 OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL", "")
 
