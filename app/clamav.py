@@ -40,12 +40,6 @@ class ClamAVResponseException(ClamAVException):
 class ClamAVScanner:
     """ClamAV Scanner class to scan files with clamd instance."""
 
-    host: str
-    port: int
-    host_key: str
-    reader: asyncio.StreamReader
-    writer: asyncio.StreamWriter
-
     def __init__(self, monitor: Monitor) -> None:
         """Initialize ClamAVScanner."""
         self.monitor = monitor
@@ -61,15 +55,14 @@ class ClamAVScanner:
         """Return statis."""
         return self._statistics
 
-    async def async_connect(self, host: str, port: int, host_key: str) -> None:
+    async def async_connect(
+        self, host: str, port: int
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         """Test connection to clamd instance."""
         try:
-            self.host = host
-            self.port = port
-            self.host_key = host_key
-            logger.debug("Connecting to clamd %s:%d", self.host, self.port)
-            self.reader, self.writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port),
+            logger.debug("Connecting to clamd %s:%d", host, port)
+            return await asyncio.wait_for(
+                asyncio.open_connection(host, port),
                 timeout=float(CLAMD_CNX_TIMEOUT),
             )
         except Exception as e:
@@ -83,32 +76,38 @@ class ClamAVScanner:
 
         self._statistics["scanned"] += 1
 
+        host, port, host_key = await self.monitor.select_best_host()
+        await self.monitor.mark_host_busy(host_key)
+
+        # connect to clamd
+        reader, writer = await self.async_connect(host, port)
+
         async def close_writer():
             try:
-                self.writer.close()
-                await self.writer.wait_closed()
+                writer.close()
+                await writer.wait_closed()
             except Exception:
                 pass
 
         async def mark_error_and_close():
             await self.monitor.mark_host_done(
-                self.host_key, elapsed=time.monotonic() - start_time, success=False
+                host_key, elapsed=time.monotonic() - start_time, success=False
             )
             await close_writer()
 
         # send INSTREAM command and stream file
         try:
-            self.writer.write(b"nINSTREAM\0")
-            await self.writer.drain()
+            writer.write(b"nINSTREAM\n")
+            await writer.drain()
 
             async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
                 if not chunk:
                     continue
-                self.writer.write(len(chunk).to_bytes(4, "big") + chunk)
-                await self.writer.drain()
+                writer.write(len(chunk).to_bytes(4, "big") + chunk)
+                await writer.drain()
 
-            self.writer.write((0).to_bytes(4, "big"))
-            await self.writer.drain()
+            writer.write((0).to_bytes(4, "big"))
+            await writer.drain()
         except BrokenPipeError as e:
             await mark_error_and_close()
             raise ClamAVSizeExceeded("[clamd-size-exceeded]") from e
@@ -119,14 +118,14 @@ class ClamAVScanner:
             # read response
             try:
                 resp_bytes = await asyncio.wait_for(
-                    self.reader.read(4096), timeout=float(CLAMD_CNX_TIMEOUT)
+                    reader.read(4096), timeout=float(CLAMD_CNX_TIMEOUT)
                 )
                 response = resp_bytes.decode(errors="ignore").strip()
 
                 logger.debug("Clamd response for %s/%s: %s", bucket, key, response)
 
-                self.writer.close()
-                await self.writer.wait_closed()
+                writer.close()
+                await writer.wait_closed()
             except asyncio.TimeoutError as e:
                 await close_writer()
                 raise ClamAVTimeoutException(
@@ -143,13 +142,15 @@ class ClamAVScanner:
 
             # Parse response
             elapsed = time.monotonic() - start_time
+            await self.monitor.mark_host_done(host_key, elapsed=elapsed, success=True)
+
             if "OK" in response:
                 self._statistics["cleaned"] += 1
                 return ClamAVResult(
                     key=key,
                     bucket=bucket,
                     status="CLEAN",
-                    instance=f"{self.host}:{self.port}",
+                    instance=f"{host}:{port}",
                     analyse=round(elapsed, 3),
                 )
 
@@ -161,7 +162,7 @@ class ClamAVScanner:
                     bucket=bucket,
                     status="INFECTED",
                     infos=infos,
-                    instance=f"{self.host}:{self.port}",
+                    instance=f"{host}:{port}",
                     analyse=round(elapsed, 3),
                 )
 
@@ -172,5 +173,5 @@ class ClamAVScanner:
                 status="ERROR",
                 infos="Not response",
                 analyse=0,
-                instance=f"{self.host}:{self.port}",
+                instance=f"{host}:{port}",
             )
