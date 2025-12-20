@@ -1,2 +1,4 @@
 -r requirements.txt
 types-aiobotocore>=3.0.0
+types-boto3
+types-botocore
