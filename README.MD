@@ -291,12 +291,12 @@ Endpoints exposés (implémentation actuelle)
       "bucket": "scans",
       "key": "processed/sample.pdf",
       "status": "PENDING" | "CLEAN" | "INFECTED" | "ERROR",
-      "virus": null | "NameOfVirus",
-      "details": "",
+      "infos": null | "NameOfVirus",
       "timestamp": "2025-12-03T12:34:56Z",
       "duration": 1.234,
       "worker": "worker-1",
       "original_filename": "sample.pdf",
+      "webhook": "https:/app.exemple.com",
       "instance": "clamav1:3310",
       "analyse": 0.123
     }
@@ -305,7 +305,7 @@ Endpoints exposés (implémentation actuelle)
     ```bash
     curl "http://localhost:8000/api/status/1234-uuid"
     ```
-  - Remarque : l'API cherche le résultat sur le topic Kafka de sortie en créant un consumer temporaire. Le délai d'attente est contrôlé par la variable d'environnement SEARCH_TIMEOUT (par défaut 5s). Si le résultat n'est pas encore disponible, l'endpoint peut renvoyer une erreur indiquant que le résultat n'est pas prêt.
+  - Remarque : l'API cherche le résultat en récupérant les tags du fichier sur le stockage S3. Si le résultat n'est pas encore disponible, le status renvoyé est `PENDING`.
 
 - GET /api/download/{id}
   - Description : télécharge le fichier scanné correspondant à l'id si le statut est CLEAN ou si `force=true`.
