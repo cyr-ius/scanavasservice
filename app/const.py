@@ -8,6 +8,8 @@ from helpers import parse_hosts
 LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))
+RESULT_TO_KAFKA_TOPIC = os.getenv("RESULT_TO_KAFKA_TOPIC", "false").lower() == "true"
+
 
 # Scan retry configuration
 DELAY = float(os.getenv("DELAY", 20))  # seconds
@@ -16,7 +18,7 @@ RETRY = int(os.getenv("RETRY", 3))
 # Kafka configuration
 KAFKA_SERVERS = os.getenv("KAFKA_SERVERS", "kafka:9092").split(",")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "files_to_scan")
-KAFKAT_STATS = "statistics"
+KAFKA_TOPIC_RSLT = os.getenv("KAFKA_TOPIC_RSLT", KAFKA_TOPIC)
 KAFKA_LOG_RETENTION_MS = int(os.getenv("KAFKA_LOG_RETENTION_MS", 86400000))
 KAFKA_SECURITY_PROTOCOL = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
 KAFKA_SASL_MECHANISM = os.getenv("KAFKA_SASL_MECHANISM", "PLAIN")

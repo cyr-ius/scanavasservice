@@ -17,8 +17,9 @@ from const import (
     DELAY,
     KAFKA_LOG_RETENTION_MS,
     KAFKA_TOPIC,
-    KAFKAT_STATS,
+    KAFKA_TOPIC_RSLT,
     MAX_CONCURRENT_SCANS,
+    RESULT_TO_KAFKA_TOPIC,
     RETRY,
     S3_ACCESS_KEY,
     S3_BUCKET,
@@ -63,6 +64,18 @@ async def async_call_webhook(key: str, url: str, payload: dict):
             logger.info(f"Webhook {url} successfully called for file {key}")
 
 
+async def async_publish2kafka(result: ScanResponse) -> None:
+    """Publish result to Kafka."""
+    producer = AIOKafkaProducer(
+        **kafka_params(), value_serializer=lambda v: v.encode("utf-8")
+    )
+    await producer.start()
+    try:
+        await producer.send_and_wait(KAFKA_TOPIC_RSLT, value=result.model_dump_json())
+    finally:
+        await producer.stop()
+
+
 # ----------------- WORKER -----------------
 @retry(
     exceptions=(S3BucketKeyException, S3LockException, S3MoveException),
@@ -73,9 +86,7 @@ async def async_call_webhook(key: str, url: str, payload: dict):
 async def worker(
     worker_id: str,
     storage: S3Storage,
-    monitor: Monitor,
     record: dict[str, Any],
-    producer: AIOKafkaProducer,
     clamav: ClamAVScanner,
 ) -> None:
     """Worker that selects the best host adaptively, performs scan, updates stats and moves object."""
@@ -98,23 +109,16 @@ async def worker(
                 key=key, bucket=bucket, status="ERROR", infos=e.__class__.__name__
             )
 
+        duration = time.monotonic() - start_time
+
         # Move object based on scan result
         target = (
             f"{S3_SCAN_RESULT}/{key}"
             if scan.status in ["CLEAN", "ERROR"]
             else f"{S3_SCAN_QUARANTINE}/{key}"
         )
-
-        duration = time.monotonic() - start_time
         result = ScanResponse(duration=duration, **scan.model_dump())
         await storage.async_move_s3_object(key, bucket, target, result)
-        logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
-
-        await producer.send_and_wait(KAFKA_TOPIC, value=result.model_dump_json())
-        await producer.send_and_wait(
-            KAFKAT_STATS,
-            value=json.dumps({**clamav.statistics, "monitor": monitor.statistics}),
-        )
 
         # Fire webhook if present
         if (
@@ -122,16 +126,17 @@ async def worker(
             and (url := metadata.get("webhook"))
             and scan is not None
         ):
-            fire_and_forget(async_call_webhook(target, url, result.model_dump()))
+            fire_and_forget(async_call_webhook(target, url, result.model_dump_json()))
+
+        # Publish result to Kafka
+        if RESULT_TO_KAFKA_TOPIC:
+            await async_publish2kafka(result)
+
+        logger.info(f"[worker-{worker_id}] Scanned {key} → {scan.status}")
 
 
 # ----------------- CONSUMER -----------------
-async def consume_loop(
-    producer: AIOKafkaProducer,
-    storage: S3Storage,
-    monitor: Monitor,
-    clamav: ClamAVScanner,
-):
+async def consume_loop(storage: S3Storage, clamav: ClamAVScanner) -> None:
     """Consume Kafka messages and schedule scans."""
 
     consumer = AIOKafkaConsumer(
@@ -157,9 +162,7 @@ async def consume_loop(
                         logger.info(
                             f"[kafka-consumer] Scheduling scan for object key: {key}"
                         )
-                        asyncio.create_task(
-                            worker(key, storage, monitor, record, producer, clamav)
-                        )
+                        asyncio.create_task(worker(key, storage, record, clamav))
     finally:
         await consumer.stop()
 
@@ -187,8 +190,11 @@ async def periodic_stats_task(
     """Log statistics periodically."""
 
     async def _check():
-        tags = await storage.async_get_s3_tags("stats/_last_stats", S3_BUCKET)
-        return tags.get("status") == "ASKED"
+        try:
+            tags = await storage.async_get_s3_tags("stats/_last_stats", S3_BUCKET)
+            return tags.get("status") == "ASKED"
+        except Exception:
+            return False
 
     while True:
         try:
@@ -226,23 +232,13 @@ async def main():
     clamav = ClamAVScanner(monitor)
     storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
 
-    producer = AIOKafkaProducer(
-        **kafka_params(), value_serializer=lambda v: v.encode("utf-8")
-    )
-    await producer.start()
-
     asyncio.create_task(monitor.reset_host_failures_periodically())
     asyncio.create_task(periodic_cleanup_task(storage))
     asyncio.create_task(periodic_stats_task(monitor, clamav, storage))
 
-    consumer_task = asyncio.create_task(
-        consume_loop(producer, storage, monitor, clamav)
-    )
+    consumer_task = asyncio.create_task(consume_loop(storage, clamav))
 
-    try:
-        await consumer_task
-    finally:
-        await producer.stop()
+    await consumer_task
 
 
 if __name__ == "__main__":
