@@ -2,7 +2,7 @@
 import asyncio
 import json
 import uuid
-from typing import Annotated, Literal
+from typing import Literal
 
 from const import (
     CLIENT_ID,
@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from helpers import normalize_ascii
 from models import BucketResponse, ErrorResponse, ScanResponse
 from mylogging import mylogging
-from pydantic import Field, HttpUrl, ValidationError
+from pydantic import HttpUrl, ValidationError
 from storage import S3Storage
 
 logger = mylogging.getLogger("api")
@@ -63,8 +63,7 @@ v1_router = APIRouter(prefix="/v1")
     },
 )
 async def upload_file_to_scan(
-    file: UploadFile,
-    webhook: Annotated[HttpUrl | None, Field(HttpUrl, max_length=128)] = None,
+    file: UploadFile, webhook: HttpUrl | None = None
 ) -> ScanResponse:
     """Upload file to S3 and send scan request to Kafka."""
     key = str(uuid.uuid4())
