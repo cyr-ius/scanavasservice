@@ -164,9 +164,12 @@ class S3Storage:
                 for k, v in tags.items()
                 if v is not None
             ]
-            await s3_client.put_object_tagging(
-                Key=key, Bucket=bucket, Tagging={"TagSet": taggins}
-            )
+            try:
+                await s3_client.put_object_tagging(
+                    Key=key, Bucket=bucket, Tagging={"TagSet": taggins}
+                )
+            except Exception as e:
+                raise S3TaggingException(f"s3-tagging-error:{e}") from e
 
     def get_bucket_key(self, record: dict[str, Any]) -> tuple[str, str]:
         """Return bucket, key from payload."""

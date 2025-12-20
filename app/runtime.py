@@ -26,7 +26,7 @@ from const import (
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
 )
-from helpers import retry
+from helpers import retry, sanitize_tag_value
 from models import ScanResponse
 from monitor import Monitor
 from mylogging import mylogging
@@ -91,7 +91,10 @@ async def worker(
         except Exception as e:
             logger.error(f"[worker-{worker_id}] {e}")
             scan = ClamAVResult(
-                key=key, bucket=bucket, status="ERROR", infos="ClamAV error"
+                key=key,
+                bucket=bucket,
+                status="ERROR",
+                infos=sanitize_tag_value(str(e), max_length=200),
             )
 
         # Move object based on scan result
