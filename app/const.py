@@ -5,12 +5,13 @@ import os
 from helpers import parse_hosts
 
 # General configuration
-DELAY = float(os.getenv("DELAY", 20))  # seconds
 LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))
-RETRY = int(os.getenv("RETRY", 3))
 
+# Scan retry configuration
+DELAY = float(os.getenv("DELAY", 20))  # seconds
+RETRY = int(os.getenv("RETRY", 3))
 
 # Kafka configuration
 KAFKA_SERVERS = os.getenv("KAFKA_SERVERS", "kafka:9092").split(",")
