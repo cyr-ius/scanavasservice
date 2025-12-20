@@ -4,7 +4,6 @@ import time
 from typing import Any
 
 from aiobotocore.session import ClientCreatorContext, get_session
-from aiohttp import ClientSession
 from clamav import ClamAVScanner, ClamAVSendException
 from const import DELAY, RETRY
 from helpers import retry
@@ -47,26 +46,20 @@ class S3BucketKeyException(S3StorageException):
 
 
 class S3Storage:
-    def __init__(
-        self,
-        endpoint,
-        key,
-        secret,
-        clamd_timeout: float,
-        region: str | None = None,
-    ):
-        self.endpoint = endpoint
-        self.key = key
-        self.secret = secret
-        self._clamd_timeout = clamd_timeout
+    def __init__(self, endpoint, key, secret, region: str | None = None):
+        self._endpoint = endpoint
+        self._key = key
+        self._secret = secret
+        self._region = region
 
-    async def _get_s3_client(self) -> ClientCreatorContext:
+    async def _async_s3_client(self) -> ClientCreatorContext:
         session = get_session()
         return session.create_client(
             "s3",
-            endpoint_url=self.endpoint,
-            aws_access_key_id=self.key,
-            aws_secret_access_key=self.secret,
+            endpoint_url=self._endpoint,
+            aws_access_key_id=self._key,
+            aws_secret_access_key=self._secret,
+            region_name=self._region,
         )
 
     async def async_move_s3_object(
@@ -75,14 +68,14 @@ class S3Storage:
         """Move or copy an object within S3 bucket."""
 
         logger.debug("Moving %s/%s to %s", bucket, key, target)
-        async with await self._get_s3_client() as s3_client:
+        async with await self._async_s3_client() as s3_client:
             try:
                 # Get headers and merge with new metada because copy_object
                 # lost old metadata on file
                 await s3_client.copy_object(
                     Bucket=bucket, Key=target, CopySource={"Bucket": bucket, "Key": key}
-                )  # type: ignore
-                await s3_client.delete_object(Bucket=bucket, Key=key)  # type: ignore
+                )
+                await s3_client.delete_object(Bucket=bucket, Key=key)
                 # Set tags
                 tags = {
                     "timestamp": str(result.timestamp),
@@ -104,15 +97,15 @@ class S3Storage:
 
         cutoff_ts = time.time() - (older_than_ms / 1000)
 
-        async with await self._get_s3_client() as s3_client:
+        async with await self._async_s3_client() as s3_client:
             paginator = s3_client.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):  # type: ignore
+            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
                 for obj in page.get("Contents", []):
                     key = obj["Key"]
                     last_modified = obj["LastModified"].timestamp()
                     if last_modified < cutoff_ts:
                         try:
-                            await s3_client.delete_object(Bucket=bucket, Key=key)  # type: ignore
+                            await s3_client.delete_object(Bucket=bucket, Key=key)
                             logger.info(f"Deleted old object {bucket}/{key}")
                         except Exception as e:
                             logger.exception(f"Failed to delete {bucket}/{key}: {e}")
@@ -129,11 +122,11 @@ class S3Storage:
         """Scan a single S3 file using a specific CLAMD host via INSTREAM."""
 
         # fetch S3 stream (fresh for each attempt)
-        async with await self._get_s3_client() as s3_client:
+        async with await self._async_s3_client() as s3_client:
             # connect to S3 and get object
             try:
                 logger.debug("Fetching S3 object %s/%s", bucket, key)
-                resp = await s3_client.get_object(Bucket=bucket, Key=key)  # type: ignore
+                resp = await s3_client.get_object(Bucket=bucket, Key=key)
                 body = resp["Body"]
             except Exception as e:
                 raise S3GetObjectException(f"s3-get-error:{e}") from e
@@ -141,36 +134,33 @@ class S3Storage:
                 # scan with clamav
                 return await clamav.async_scan(key, bucket, body)
 
-    @retry(tries=RETRY, delay=DELAY, logger=logger)
-    async def async_call_webhook(self, key: str, url: str, payload: dict):
-        async with ClientSession(raise_for_status=True) as session:
-            logger.info("Calling webhook %s", key)
-            async with session.post(url, json=payload):
-                logger.info(f"Webhook {url} successfully called for file {key}")
-
     async def async_get_s3_metadata(self, key: str, bucket: str) -> dict[str, Any]:
         """Retrieve metadata."""
-        async with await self._get_s3_client() as s3_client:
-            obj = await s3_client.head_object(Key=key, Bucket=bucket)  # type: ignore
+        async with await self._async_s3_client() as s3_client:
+            obj = await s3_client.head_object(Key=key, Bucket=bucket)
             return obj.get("Metadata", {})
 
     async def async_get_s3_tags(self, key: str, bucket: str) -> dict[str, Any]:
         """Return tags."""
-        async with await self._get_s3_client() as s3_client:
-            result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)  # type: ignore
+        async with await self._async_s3_client() as s3_client:
+            result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)
             return result["TagSet"]
 
     async def async_set_s3_tags(
         self, key: str, bucket: str, tags: dict[str, Any]
     ) -> None:
         """Return tags."""
-        async with await self._get_s3_client() as s3_client:
+        async with await self._async_s3_client() as s3_client:
             if len(tags) > 10:
                 raise S3StorageException("Too many tags exceeded (max:10)")
-            taggins = [{"Key": str(k), "Value": str(v)} for k, v in tags.items()]
+            taggins = [
+                {"Key": str(k), "Value": str(v)}
+                for k, v in tags.items()
+                if v is not None
+            ]
             await s3_client.put_object_tagging(
                 Key=key, Bucket=bucket, Tagging={"TagSet": taggins}
-            )  # type: ignore
+            )
 
     def get_bucket_key(self, record: dict[str, Any]) -> tuple[str, str]:
         """Return bucket, key from payload."""
