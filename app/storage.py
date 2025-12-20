@@ -79,9 +79,9 @@ class S3Storage:
                 # Set tags
                 tags = {
                     "timestamp": str(result.timestamp),
-                    "duration": round(result.duration, 3) if result.duration else 0.0,
+                    "duration": round(result.duration, 3) if result.duration else None,
                     "status": result.status,
-                    "infos": result.infos or "",
+                    "infos": result.infos,
                     "analyse": result.analyse,
                     "instance": result.instance,
                 }
