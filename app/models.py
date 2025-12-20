@@ -29,10 +29,6 @@ class ScanResponse(Metadata, ClamAVResult, MessageBase):
     worker: str | None = None
 
 
-class UploadResponse(Metadata, MessageBase):
-    pass
-
-
 class BucketResponse(ScanResponse):
     lastmodified: datetime
     etag: str
