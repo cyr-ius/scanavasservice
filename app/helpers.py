@@ -8,8 +8,6 @@ import unicodedata
 from collections.abc import Callable
 from typing import Any
 
-from exception import TimeoutExceededError
-
 logger = logging.getLogger(__name__)
 
 
@@ -93,3 +91,7 @@ def retry(
         return newfn
 
     return decorator
+
+
+class TimeoutExceededError(Exception):
+    """Timeout exceeded exception."""
