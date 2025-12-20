@@ -17,6 +17,10 @@ class ClamAVConnectException(ClamAVException):
     """Scan Exception"""
 
 
+class ClamAVSizeExceeded(ClamAVException):
+    """Scan Exception"""
+
+
 class ClamAVNoStatusException(ClamAVException):
     """Scan Exception"""
 
@@ -79,9 +83,22 @@ class ClamAVScanner:
 
         self._statistics["scanned"] += 1
 
+        async def close_writer():
+            try:
+                self.writer.close()
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+
+        async def mark_error_and_close():
+            await self.monitor.mark_host_done(
+                self.host_key, elapsed=time.monotonic() - start_time, success=False
+            )
+            await close_writer()
+
         # send INSTREAM command and stream file
         try:
-            self.writer.write(b"nINSTREAM\n")
+            self.writer.write(b"nINSTREAM\0")
             await self.writer.drain()
 
             async for chunk in body.iter_chunks(MAX_CHUNK_SIZE):
@@ -92,16 +109,12 @@ class ClamAVScanner:
 
             self.writer.write((0).to_bytes(4, "big"))
             await self.writer.drain()
+        except BrokenPipeError as e:
+            await mark_error_and_close()
+            raise ClamAVSizeExceeded("[clamd-size-exceeded]") from e
         except Exception as e:
-            try:
-                self.writer.close()
-                await self.writer.wait_closed()
-            except Exception:
-                pass
-            await self.monitor.mark_host_done(
-                self.host_key, elapsed=time.monotonic() - start_time, success=False
-            )
-            raise ClamAVSendException(f"clamd-send-error:{e}") from e
+            await mark_error_and_close()
+            raise ClamAVSendException(f"[clamd-send-error] {e}") from e
         else:
             # read response
             try:
@@ -115,56 +128,49 @@ class ClamAVScanner:
                 self.writer.close()
                 await self.writer.wait_closed()
             except asyncio.TimeoutError as e:
-                try:
-                    self.writer.close()
-                    await self.writer.wait_closed()
-                except Exception:
-                    pass
+                await close_writer()
                 raise ClamAVTimeoutException(
-                    f"clamd-response-timeout:{key} - {self.host}:{self.port} - {e}"
+                    f"[clamd-response-timeout-{key}] {e}"
                 ) from e
             except Exception as e:
-                try:
-                    self.writer.close()
-                    await self.writer.wait_closed()
-                except Exception:
-                    pass
+                await close_writer()
                 raise ClamAVResponseException(
-                    f"clamd-response-error: {key} - {self.host}:{self.port} - {e}"
+                    f"[clamd-response-error-{key}] {e}"
                 ) from e
 
             else:
-                elapsed = time.monotonic() - start_time
+                await close_writer()
 
-                # Parse response
-                if "OK" in response:
-                    self._statistics["cleaned"] += 1
-                    return ClamAVResult(
-                        key=key,
-                        bucket=bucket,
-                        status="CLEAN",
-                        instance=f"{self.host}:{self.port}",
-                        analyse=round(elapsed, 3),
-                    )
-
-                if "FOUND" in response:
-                    self._statistics["infected"] += 1
-                    infos = response.split("FOUND")[0].split(":")[-1].strip()
-                    return ClamAVResult(
-                        key=key,
-                        bucket=bucket,
-                        status="INFECTED",
-                        infos=infos,
-                        instance=f"{self.host}:{self.port}",
-                        analyse=round(elapsed, 3),
-                    )
-
-                self._statistics["errors"] += 1
+            # Parse response
+            elapsed = time.monotonic() - start_time
+            if "OK" in response:
+                self._statistics["cleaned"] += 1
                 return ClamAVResult(
                     key=key,
                     bucket=bucket,
-                    status="ERROR",
-                    infos="Not responsed status",
-                    analyse=0,
+                    status="CLEAN",
                     instance=f"{self.host}:{self.port}",
+                    analyse=round(elapsed, 3),
                 )
+
+            if "FOUND" in response:
+                self._statistics["infected"] += 1
+                infos = response.split("FOUND")[0].split(":")[-1].strip()
+                return ClamAVResult(
+                    key=key,
+                    bucket=bucket,
+                    status="INFECTED",
+                    infos=infos,
+                    instance=f"{self.host}:{self.port}",
+                    analyse=round(elapsed, 3),
+                )
+
+            self._statistics["errors"] += 1
+            return ClamAVResult(
+                key=key,
+                bucket=bucket,
+                status="ERROR",
+                infos="Not response",
+                analyse=0,
+                instance=f"{self.host}:{self.port}",
+            )
