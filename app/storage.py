@@ -19,41 +19,45 @@ class S3StorageException(Exception):
 
 
 class S3GetObjectException(S3StorageException):
-    """Custom exception for S3 get object errors."""
+    """S3 get object errors."""
 
 
 class S3MoveException(S3StorageException):
-    """Custom exception for S3 move errors."""
+    """S3 move errors."""
 
 
 class S3TaggingException(S3StorageException):
-    """Custom exception for S3 move errors."""
+    """S3 tagging errors."""
 
 
 class S3LockException(S3StorageException):
-    """Custom exception for S3 lock errors."""
+    """S3 lock errors."""
 
 
 class S3UnlockException(S3StorageException):
-    """Custom exception for S3 unlock errors."""
+    """S3 unlock errors."""
 
 
 class S3MetadataException(S3StorageException):
-    """Custom exception for S3 unlock errors."""
+    """S3 metadata errors."""
 
 
 class S3BucketKeyException(S3StorageException):
-    """Custom exception for S3 unlock errors."""
+    """S3 bucket/key errors."""
 
 
 class S3Storage:
+    """S3 Storage class to manage S3 operations."""
+
     def __init__(self, endpoint, key, secret, region: str | None = None):
+        """Initialize S3Storage."""
         self._endpoint = endpoint
         self._key = key
         self._secret = secret
         self._region = region
 
     async def _async_s3_client(self) -> ClientCreatorContext:
+        """Return async S3 client."""
         session = get_session()
         return session.create_client(
             "s3",

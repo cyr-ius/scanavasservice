@@ -54,6 +54,8 @@ def fire_and_forget(coro: Awaitable[None]):
 
 @retry(tries=RETRY, delay=DELAY, logger=logger)
 async def async_call_webhook(key: str, url: str, payload: dict):
+    """Call webhook asynchronously."""
+
     async with ClientSession(raise_for_status=True) as session:
         logger.info("Calling webhook %s", key)
         async with session.post(url, json=payload):
@@ -76,6 +78,7 @@ async def worker(
     clamav: ClamAVScanner,
 ) -> None:
     """Worker that selects the best host adaptively, performs scan, updates stats and moves object."""
+
     async with scan_semaphore:
         logger.info(f"[worker-{worker_id}] Start scan.")
         start_time = time.monotonic()
@@ -132,6 +135,8 @@ async def consume_loop(
     monitor: Monitor,
     clamav: ClamAVScanner,
 ):
+    """Consume Kafka messages and schedule scans."""
+
     consumer = AIOKafkaConsumer(KAFKA_TOPIC, **kafka_params())
     await consumer.start()
     try:
@@ -172,6 +177,7 @@ async def periodic_cleanup_task(storage: S3Storage) -> None:
 
 # ----------------- MAIN -----------------
 async def main():
+    """Main entrypoint."""
     monitor = Monitor(CLAMD_HOSTS)
     clamav = ClamAVScanner(monitor)
     storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)

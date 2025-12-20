@@ -25,6 +25,8 @@ class Stat(BaseModel):
 
 
 class Monitor:
+    """Monitor class to track ClamAV host statistics and select best host."""
+
     def __init__(self, clamd_hosts: list[tuple[str, int]]):
         """Initialize."""
         self.clamd_hosts = clamd_hosts
@@ -161,7 +163,9 @@ class Monitor:
             await asyncio.sleep(COOLDOWN_SECONDS / 2)
 
     async def update_monitor_state(self):
-        state = {"timestamp": time.time()}
-        for key, stats in self._host_stats.items():
-            state.update({key: stats.model_dump()})
-        self._statistics = state
+        """Update monitor state."""
+        async with self._stats_lock:
+            state = {"timestamp": time.time()}
+            for key, stats in self._host_stats.items():
+                state.update({key: stats.model_dump()})
+            self._statistics = state

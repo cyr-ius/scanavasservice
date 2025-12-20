@@ -4,6 +4,8 @@ from const import LIB_LOG_LEVEL, LOG_LEVEL
 
 
 class Mylogger:
+    """Custom logger class."""
+
     def __init__(self, log_level: str, lib_log_level: str = "WARNING"):
         """Init."""
         _formatter = logging.Formatter(
@@ -28,6 +30,7 @@ class Mylogger:
                 liblog.addHandler(self.console_handler)
 
     def getLogger(self, name):
+        """Return logger."""
         logger_ = logging.getLogger(name)
         logger_.handlers = []
         logger_.propagate = False

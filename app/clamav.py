@@ -10,31 +10,31 @@ logger = mylogging.getLogger("clamav")
 
 
 class ClamAVException(Exception):
-    """Custom exception for scan result fetch errors."""
+    """Base ClamAV Exception."""
 
 
 class ClamAVConnectException(ClamAVException):
-    """Scan Exception"""
+    """Error while connecting to clamd."""
 
 
 class ClamAVSizeExceeded(ClamAVException):
-    """Scan Exception"""
+    """File size exceeded exception."""
 
 
 class ClamAVNoStatusException(ClamAVException):
-    """Scan Exception"""
+    """No status received from clamd."""
 
 
 class ClamAVSendException(ClamAVException):
-    """Scan Exception"""
+    """Error while sending data to clamd."""
 
 
 class ClamAVTimeoutException(ClamAVException):
-    """Scan Exception"""
+    """Timeout Exception"""
 
 
 class ClamAVResponseException(ClamAVException):
-    """Scan Exception"""
+    """Error while receiving response from clamd."""
 
 
 class ClamAVScanner:
