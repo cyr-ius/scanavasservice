@@ -97,6 +97,7 @@ class ClamAVScanner:
 
         try:
             # send INSTREAM command and stream file
+            logger.debug("Sending INSTREAM to clamd %s:%d", host, port)
             try:
                 writer.write(b"nINSTREAM\0")
                 await writer.drain()
@@ -117,6 +118,7 @@ class ClamAVScanner:
                 raise ClamAVSendException(f"[clamd-send-error] {e}") from e
 
             # read response
+            logger.debug("Waiting for clamd response for %s/%s", bucket, key)
             try:
                 resp_bytes = await asyncio.wait_for(
                     reader.read(4096), timeout=float(CLAMD_CNX_TIMEOUT)
@@ -139,6 +141,13 @@ class ClamAVScanner:
             # Parse response
             elapsed = time.monotonic() - start_time
             await self.monitor.mark_host_done(host_key, elapsed=elapsed, success=True)
+            logger.debug(
+                "Scan completed for %s/%s in %.3f seconds (%s)",
+                bucket,
+                key,
+                elapsed,
+                response,
+            )
 
             if "OK" in response:
                 self._statistics["cleaned"] += 1
