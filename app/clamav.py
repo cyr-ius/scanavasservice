@@ -98,7 +98,7 @@ class ClamAVScanner:
         try:
             # send INSTREAM command and stream file
             try:
-                writer.write(b"nINSTREAM\0")  # Changez \n en \0
+                writer.write(b"nINSTREAM\0")
                 await writer.drain()
 
                 async for chunk in body.iter_chunks(CLAMD_CHUNK_SIZE):
