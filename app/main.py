@@ -32,6 +32,7 @@ from depends import protected
 from fastapi import APIRouter, FastAPI, HTTPException, UploadFile, status
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
+from helpers import normalize_ascii
 from models import BuckenContent, ScanResult, UploadResponse
 from mylogging import mylogging
 from pydantic import HttpUrl
@@ -88,12 +89,18 @@ async def upload_file_to_scan(
         )
     try:
         async with s3_client_ctx() as client:  # type: ignore
-            metadata = {"OriginalFilename": file.filename}
-            if url is not None:
-                metadata = {**metadata, "Webhook": str(url)}
-            await client.put_object(
-                Bucket=S3_BUCKET, Key=key, Body=data, Metadata=metadata
-            )  # type: ignore
+            if filename := file.filename:
+                metadata = {"OriginalFilename": normalize_ascii(filename)}
+                if url is not None:
+                    metadata = {**metadata, "Webhook": str(url)}
+                await client.put_object(
+                    Bucket=S3_BUCKET, Key=key, Body=data, Metadata=metadata
+                )  # type: ignore
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Filename is required",
+                )
     except Exception as e:
         logger.exception("S3 put_object failed")
         raise HTTPException(
@@ -158,11 +165,11 @@ async def scan_status(key: str) -> ScanResult:
                     Bucket=S3_BUCKET, Key=f"{prefix}/{key}"
                 )  # type: ignore
                 metadata = obj.get("Metadata", {})
-                if obj.get("TagCount"):
-                    obj_tags = await s3_client.get_object_tagging(
-                        Bucket=S3_BUCKET, Key=f"{prefix}/{key}"
-                    )  # type: ignore
-                    tags = {t["Key"]: t["Value"] for t in obj_tags.get("TagSet", [])}
+                obj_tags = await s3_client.get_object_tagging(
+                    Bucket=S3_BUCKET, Key=f"{prefix}/{key}"
+                )  # type: ignore
+                tags = {t["Key"]: t["Value"] for t in obj_tags.get("TagSet", [])}
+
                 return ScanResult(
                     key=f"{prefix}/{key}",
                     bucket=S3_BUCKET,
