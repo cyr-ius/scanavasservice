@@ -8,7 +8,7 @@ from aiobotocore.session import ClientCreatorContext, get_session
 from clamav import ClamAVScanner, ClamAVSendException
 from const import DELAY, RETRY
 from helpers import retry
-from models import ClamAVResult, ScanResponse
+from models import BucketResponse, ClamAVResult, ScanResponse
 from mylogging import mylogging
 
 logger = mylogging.getLogger("storage")
@@ -155,7 +155,7 @@ class S3Storage:
         """Return tags."""
         async with await self._async_s3_client() as s3_client:
             result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)
-            return result["TagSet"]
+            return {t["Key"]: t["Value"] for t in result["TagSet"]}
 
     async def async_set_s3_tags(
         self, key: str, bucket: str, tags: dict[str, Any]
@@ -175,6 +175,87 @@ class S3Storage:
                 )
             except Exception as e:
                 raise S3TaggingException(f"s3-tagging-error:{e}") from e
+
+    async def astnc_create_s3_file(
+        self,
+        key: str,
+        bucket: str,
+        metadata: dict[str, Any] | None = None,
+        body: bytes = b"",
+    ) -> None:
+        """Create S3 file."""
+        async with await self._async_s3_client() as s3_client:
+            try:
+                await s3_client.put_object(
+                    Key=key, Bucket=bucket, Body=body, Metadata=metadata
+                )
+            except Exception as e:
+                raise S3LockException(f"s3-lock-error:{e}") from e
+
+    async def async_get_s3_file(self, key: str, bucket: str) -> bytes | None:
+        """Get S3 file."""
+        async with await self._async_s3_client() as s3_client:
+            try:
+                logger.debug("Fetching S3 object %s/%s", bucket, key)
+                resp = await s3_client.get_object(Bucket=bucket, Key=key)
+                body = resp["Body"]
+                data = await body.read()
+                return data
+            except s3_client.exceptions.NoSuchKey:
+                return None
+            except Exception as e:
+                raise S3GetObjectException(f"s3-get-error:{e}") from e
+
+    async def async_stream_s3_file(self, key: str, bucket: str):
+        """Stream S3 file."""
+        async with await self._async_s3_client() as s3_client:
+            logger.debug("Fetching S3 object %s/%s", bucket, key)
+            resp = await s3_client.get_object(Bucket=bucket, Key=key)
+            body = resp["Body"]
+            try:
+                async for chunk in body.iter_chunks():
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                # assure close du body si nécessaire
+                try:
+                    await body.close()
+                except Exception:
+                    pass
+
+    async def async_delete_s3_file(self, key: str, bucket: str) -> None:
+        """Delete S3 file."""
+        async with await self._async_s3_client() as s3_client:
+            try:
+                await s3_client.delete_object(Bucket=bucket, Key=key)
+            except Exception as e:
+                raise S3GetObjectException(f"s3-delete-error:{e}") from e
+
+    async def async_browse_s3_bucket(self, bucket: str) -> list[BucketResponse]:
+        """Browse S3 bucket."""
+        result = []
+        try:
+            async with await self._async_s3_client() as s3_client:
+                paginator = s3_client.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(Bucket=bucket):
+                    for obj in page.get("Contents", []):
+                        obj = {str(k).lower(): v for k, v in obj.items()}
+                        key = obj["key"]
+                        metadata = (
+                            await s3_client.head_object(Bucket=bucket, Key=key)
+                        )["Metadata"]
+                        tagset = await s3_client.get_object_tagging(
+                            Bucket=bucket, Key=key
+                        )
+                        tags = {t["Key"]: t["Value"] for t in tagset["TagSet"]}
+                        result.append(
+                            BucketResponse(bucket=bucket, **obj, **metadata, **tags)
+                        )
+        except Exception as e:
+            raise S3GetObjectException(f"s3-browse-error:{e}") from e
+        finally:
+            return result
 
     def get_bucket_key(self, record: dict[str, Any]) -> tuple[str, str]:
         """Return bucket, key from payload."""
