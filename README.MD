@@ -326,13 +326,6 @@ Endpoints exposés (implémentation actuelle)
     curl "http://localhost:8000/api/heartbeat"
     ```
 
-Notes opérationnelles
-
-- Ports : l'API est exposée sur le port 8000 du host (docker-compose mappe "8000:8000").
-- Topics Kafka : le comportement dépend des variables d'environnement KAFKA_INPUT_TOPIC et KAFKA_OUTPUT_TOPIC.
-- Stockage : S3/MiniO est configuré via S3_ENDPOINT_URL, S3_ACCESS_KEY, S3_SECRET_KEY, et S3_BUCKET.
-- Timeouts / retry : la recherche de résultat dans /result/{id} utilise un consumer Kafka temporaire avec un timeout (SEARCH_TIMEOUT).
-
 ## Architecture et flux de traitement
 
 ### Flux upload via API
@@ -342,7 +335,7 @@ Notes opérationnelles
 3. L'API publie un message sur KAFKA_INPUT_TOPIC
 4. Le worker (runtime.py) consomme le message Kafka
 5. Le worker récupère le fichier depuis S3 et le scanne via ClamAV
-6. Le résultat est publié sur KAFKA_OUTPUT_TOPIC
+6. Le résultat est inscrit dans des Tags sur le fichier
 7. Client interroge `GET /api/status/{id}` pour récupérer le résultat
 8. Si CLEAN, le fichier est déplacé vers `processed/`. Si INFECTED, vers `quarantine/`.
 
