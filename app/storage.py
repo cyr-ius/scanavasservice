@@ -8,10 +8,42 @@ from aiohttp import ClientSession
 from clamav import ClamAVScanner, ClamAVSendException
 from const import BASE_DELAY, RETRY
 from helpers import retry
-from models import ClamAVResult, ScanResult
+from models import ClamAVResult, ScanResponse
 from mylogging import mylogging
 
 logger = mylogging.getLogger("storage")
+
+
+class S3StorageException(Exception):
+    """Storage exception."""
+
+
+class S3GetObjectException(S3StorageException):
+    """Custom exception for S3 get object errors."""
+
+
+class S3MoveException(S3StorageException):
+    """Custom exception for S3 move errors."""
+
+
+class S3TaggingException(S3StorageException):
+    """Custom exception for S3 move errors."""
+
+
+class S3LockException(S3StorageException):
+    """Custom exception for S3 lock errors."""
+
+
+class S3UnlockException(S3StorageException):
+    """Custom exception for S3 unlock errors."""
+
+
+class S3MetadataException(S3StorageException):
+    """Custom exception for S3 unlock errors."""
+
+
+class S3BucketKeyException(S3StorageException):
+    """Custom exception for S3 unlock errors."""
 
 
 class S3Storage:
@@ -38,7 +70,7 @@ class S3Storage:
         )
 
     async def async_move_s3_object(
-        self, key: str, bucket: str, target: str, result: ScanResult
+        self, key: str, bucket: str, target: str, result: ScanResponse
     ) -> None:
         """Move or copy an object within S3 bucket."""
 
@@ -86,7 +118,10 @@ class S3Storage:
                             logger.exception(f"Failed to delete {bucket}/{key}: {e}")
 
     @retry(
-        exceptions=(ClamAVSendException,), tries=RETRY, delay=BASE_DELAY, logger=logger
+        exceptions=(ClamAVSendException, S3GetObjectException),
+        tries=RETRY,
+        delay=BASE_DELAY,
+        logger=logger,
     )
     async def async_scan_s3_object(
         self, key: str, bucket: str, clamav: ClamAVScanner
@@ -146,35 +181,3 @@ class S3Storage:
                 return key, bucket
 
         raise S3BucketKeyException("Unable to determine the bucket and object key.")
-
-
-class S3StorageException(Exception):
-    """Storage exception."""
-
-
-class S3GetObjectException(S3StorageException):
-    """Custom exception for S3 get object errors."""
-
-
-class S3MoveException(S3StorageException):
-    """Custom exception for S3 move errors."""
-
-
-class S3TaggingException(S3StorageException):
-    """Custom exception for S3 move errors."""
-
-
-class S3LockException(S3StorageException):
-    """Custom exception for S3 lock errors."""
-
-
-class S3UnlockException(S3StorageException):
-    """Custom exception for S3 unlock errors."""
-
-
-class S3MetadataException(S3StorageException):
-    """Custom exception for S3 unlock errors."""
-
-
-class S3BucketKeyException(S3StorageException):
-    """Custom exception for S3 unlock errors."""
