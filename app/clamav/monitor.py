@@ -166,4 +166,4 @@ class Monitor:
     async def update_monitor_state(self):
         """Update monitor state."""
         for key, stats in self._host_stats.items():
-            self._statistics.update(stats.model_dump())
+            self._statistics.update({key: stats.model_dump()})
