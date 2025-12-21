@@ -1,6 +1,5 @@
 """Utils for the application."""
 
-import logging
 import ssl
 from typing import Any
 
@@ -13,8 +12,6 @@ from .const import (
     SSL_CHECK_HOSTNAME,
     SSL_VERIFY_MODE,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _ssl_context():

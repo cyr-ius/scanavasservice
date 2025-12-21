@@ -31,12 +31,12 @@ from ..const import (
     S3_SECRET_KEY,
     VERSION,
 )
+from ..logging import getLogger
 from ..models import BucketResponse, ScanResponse
-from ..mylogging import mylogging
 from ..storage import S3Storage
 from .depends import ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, protected
 
-logger = mylogging.getLogger("api")
+logger = getLogger("api")
 storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
 
 

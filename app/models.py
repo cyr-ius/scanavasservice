@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from .clamav.models import ClamAVResult
+from .clamav import ClamAVResult
 
 
 class Metadata(BaseModel):

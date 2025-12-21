@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
 import json
-import logging
 import time
 from collections.abc import Awaitable
 from typing import Any
@@ -9,8 +8,7 @@ from typing import Any
 from aiohttp import ClientSession
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-from .clamav import ClamAVResult, ClamAVScanner
-from .clamav.monitor import Monitor
+from .clamav import ClamAVResult, ClamAVScanner, Monitor
 from .const import (
     CLAMD_HOSTS,
     DELAY,
@@ -28,12 +26,12 @@ from .const import (
     S3_SECRET_KEY,
 )
 from .helpers import retry
+from .logging import getLogger, logging
 from .models import ScanResponse
-from .mylogging import mylogging
 from .storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
 from .utils import kafka_params
 
-logger = mylogging.getLogger("scanav")
+logger = getLogger("scanav")
 
 # Limit max concurrent scans
 scan_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCANS)

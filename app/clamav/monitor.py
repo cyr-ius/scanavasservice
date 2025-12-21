@@ -10,9 +10,9 @@ from ..const import (
     EMA_ALPHA,
     FAILURE_WEIGHT,
 )
-from ..mylogging import mylogging
+from ..logging import getLogger
 
-logger = mylogging.getLogger("monitor")
+logger = getLogger("monitor")
 
 
 class Stat(BaseModel):
