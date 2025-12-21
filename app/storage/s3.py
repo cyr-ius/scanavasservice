@@ -1,6 +1,5 @@
 """Class for managment S3 storage."""
 
-import re
 import time
 from typing import Any
 
@@ -16,9 +15,9 @@ from .exceptions import (
     S3GetObjectException,
     S3LockException,
     S3MoveException,
-    S3StorageException,
     S3TaggingException,
 )
+from .models import S3Tags
 
 logger = getLogger("storage")
 
@@ -59,14 +58,7 @@ class S3Storage:
                 )
                 await s3_client.delete_object(Bucket=bucket, Key=key)
                 # Set tags
-                tags = {
-                    "status": result.status,
-                    "timestamp": str(result.timestamp),
-                    "duration": result.duration,
-                    "instance": result.instance,
-                    "infos": result.infos,
-                    "analyse": result.analyse,
-                }
+                tags = S3Tags.from_scan_response(result)
                 await self.async_set_s3_tags(target, bucket, tags)
 
             except Exception as e:
@@ -132,23 +124,14 @@ class S3Storage:
         """Return tags."""
         async with await self._async_s3_client() as s3_client:
             result = await s3_client.get_object_tagging(Key=key, Bucket=bucket)
-            return {t["Key"]: t["Value"] for t in result["TagSet"]}
+            return S3Tags.from_aws_response(result).to_dict()
 
-    async def async_set_s3_tags(
-        self, key: str, bucket: str, tags: dict[str, Any]
-    ) -> None:
+    async def async_set_s3_tags(self, key: str, bucket: str, tags: S3Tags) -> None:
         """Return tags."""
         async with await self._async_s3_client() as s3_client:
-            if len(tags) > 10:
-                raise S3StorageException("Too many tags exceeded (max:10)")
-            taggins = [
-                {"Key": sanitize_tag_key(k), "Value": sanitize_tag_value(v)}
-                for k, v in tags.items()
-                if v is not None
-            ]
             try:
                 await s3_client.put_object_tagging(
-                    Key=key, Bucket=bucket, Tagging={"TagSet": taggins}
+                    Key=key, Bucket=bucket, Tagging=tags.to_tagset()
                 )
             except Exception as e:
                 raise S3TaggingException(f"s3-tagging-error:{e}") from e
@@ -225,9 +208,9 @@ class S3Storage:
                         tagset = await s3_client.get_object_tagging(
                             Bucket=bucket, Key=key
                         )
-                        tags = {t["Key"]: t["Value"] for t in tagset["TagSet"]}
+                        tags = S3Tags.from_aws_response(tagset).to_dict()
                         result.append(
-                            BucketResponse(bucket=bucket, **obj, **metadata, **tags)
+                            BucketResponse(bucket=bucket, **tags, **obj, **metadata)
                         )
         except Exception as e:
             raise S3GetObjectException(f"s3-browse-error:{e}") from e
@@ -243,34 +226,3 @@ class S3Storage:
                 return key, bucket
 
         raise S3BucketKeyException("Unable to determine the bucket and object key.")
-
-
-def sanitize_tag_value(value: Any, max_length: int = 256) -> str:
-    """Sanitize S3 tag value according to AWS constraints."""
-    # Convert to string
-    text = str(value)
-
-    # Remove invalid characters (keep only allowed: alphanumeric, space, +, -, =, ., _, :, /, @)
-    text = re.sub(r"[^a-zA-Z0-9\s+\-=._:/@]", "", text)
-
-    # Remove newlines, tabs, and control characters
-    text = re.sub(r"[\n\r\t\x00-\x1F]", "", text)
-
-    # Truncate to max length
-    if len(text) > max_length:
-        text = text[:max_length]
-
-    # If empty after sanitization, use default
-    return text or "unknown"
-
-
-def sanitize_tag_key(value: str, max_length: int = 128) -> str:
-    """Sanitize S3 tag key according to AWS constraints."""
-    text = str(value).lower()
-    text = re.sub(r"[^a-z0-9\s+\-=._:/@]", "", text)
-    text = re.sub(r"[\n\r\t\x00-\x1F]", "", text)
-
-    if len(text) > max_length:
-        text = text[:max_length]
-
-    return text or "unknown"

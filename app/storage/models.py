@@ -63,11 +63,11 @@ class S3TagSet(BaseModel):
         return {tag.key: tag.value for tag in self.tags}
 
 
-class ScanResultTags(S3TagSet):
+class S3Tags(S3TagSet):
     """Tags for scan result."""
 
     @classmethod
-    def from_scan_response(cls, response: "ScanResponse") -> "ScanResultTags":  # type: ignore # noqa: F821
+    def from_scan_response(cls, response: "ScanResponse") -> "S3Tags":  # type: ignore # noqa: F821
         """Create tags from ScanResponse."""
         tags_dict = {
             "status": response.status,
@@ -78,3 +78,15 @@ class ScanResultTags(S3TagSet):
             "analyse": str(response.analyse) if response.analyse else "0",
         }
         return cls(tags=tags_dict)  # type: ignore
+
+    @classmethod
+    def from_aws_response(cls, aws_response: dict) -> "S3Tags":
+        """Create tags from AWS get_object_tagging response."""
+        tagset = aws_response.get("TagSet", [])
+        tags_dict = {tag["Key"]: tag["Value"] for tag in tagset}
+        return cls(tags=tags_dict)  # type: ignore
+
+    @classmethod
+    def from_dict(cls, tags: dict[str, str]) -> "S3Tags":
+        """Create tags from dict."""
+        return cls(tags=[S3Tag(key=k, value=v) for k, v in tags.items()])

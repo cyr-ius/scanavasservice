@@ -17,7 +17,7 @@
             "name": "Execute - Runtime",
             "type": "debugpy",
             "request": "launch",
-            "module": "app.runtime",
+            "module": "app",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env",
             "justMyCode": true
@@ -28,7 +28,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "app.api.main:app",
+                "app.api:app",
                 "--host",
                 "0.0.0.0",
                 "--reload",

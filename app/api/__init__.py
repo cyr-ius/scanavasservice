@@ -33,7 +33,7 @@ from ..const import (
 )
 from ..logging import getLogger
 from ..models import BucketResponse, ScanResponse
-from ..storage import S3Storage
+from ..storage import S3Storage, S3Tags
 from .depends import ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, protected
 
 logger = getLogger("api")
@@ -250,22 +250,31 @@ async def scan_notification(body: ScanResponse):
 
 async def _get_last_stats_message() -> dict | None:
     """Get last message from Kafka topic."""
-    metadata = {"lock-id": "clamav-scan-ignore"}
+    metadata = {"lock-id": "clamav-scan-ask"}
     last_stats_message = {}
 
     await storage.astnc_create_s3_file("stats/_last_stats", S3_BUCKET, metadata)
-    await storage.async_set_s3_tags("stats/_last_stats", S3_BUCKET, {"status": "ASKED"})
+
+    tags = S3Tags.from_dict({"status": "ASKED"})
+    await storage.async_set_s3_tags("stats/_last_stats", S3_BUCKET, tags)
 
     async def _check():
-        tags = await storage.async_get_s3_tags("stats/_last_stats", S3_BUCKET)
-        return tags.get("status") == "ASKED"
+        """Wait until S3 tag status becomes DONE."""
+        while True:
+            tags = await storage.async_get_s3_tags("stats/_last_stats", S3_BUCKET)
+            if tags.get("status") == "DONE":
+                return
+            await asyncio.sleep(0.2)
 
-    while await _check() == "ASKED":
-        await asyncio.sleep(0.5)
+    try:
+        await asyncio.wait_for(_check(), timeout=5)
+    except asyncio.TimeoutError:
+        raise HTTPException(500, "Timeout waiting for last stats message")
 
     for msg in ["stats/monitor_stats.json", "stats/clamav_counters.json"]:
         if content := await storage.async_get_s3_file(msg, S3_BUCKET):
             r = json.loads(content.decode("utf-8"))
+            logger.info("Last stats message: %s", r)
             last_stats_message.update(r)
 
     return last_stats_message

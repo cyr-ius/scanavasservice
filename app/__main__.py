@@ -28,7 +28,13 @@ from .const import (
 from .helpers import retry
 from .logging import getLogger, logging
 from .models import ScanResponse
-from .storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
+from .storage import (
+    S3BucketKeyException,
+    S3LockException,
+    S3MoveException,
+    S3Storage,
+    S3Tags,
+)
 from .utils import kafka_params
 
 logger = getLogger("scanav")
@@ -95,7 +101,8 @@ async def worker(
         key, bucket = storage.get_bucket_key(record)
 
         # Set status to PENDING
-        await storage.async_set_s3_tags(key, bucket, {"status": "PENDING"})
+        tags = S3Tags.from_dict({"status": "PENDING"})
+        await storage.async_set_s3_tags(key, bucket, tags)
 
         try:
             scan = await storage.async_scan_s3_object(key, bucket, clamav)
@@ -147,18 +154,22 @@ async def consume_loop(storage: S3Storage, clamav: ClamAVScanner) -> None:
             logger.debug("Kafka payload: %s", payload)
             for record in payload.get("Records", []):
                 if record.get("eventName") == "s3:ObjectCreated:Put":
-                    logger.debug("New S3 object to scan detected.")
                     object = record.get("s3", {}).get("object", {})
-                    skip_file = (
-                        object.get("userMetadata", {}).get("X-Amz-Meta-Lock-Id")
-                        == "clamav-scan-ignore"
+                    key = object.get("key")
+                    lock_id = object.get("userMetadata", {}).get("X-Amz-Meta-Lock-Id")
+                    logger.debug(
+                        "New S3 object to scan detected (key: %s, lock-id: %s)",
+                        key,
+                        lock_id,
                     )
-
-                    if key := object.get("key") and not skip_file:
+                    if key and lock_id is None:
                         logger.info(
                             f"[kafka-consumer] Scheduling scan for object key: {key}"
                         )
                         asyncio.create_task(worker(key, storage, record, clamav))
+
+                    if key and lock_id == "clamav-scan-ask":
+                        asyncio.create_task(stats(clamav, storage))
     finally:
         await consumer.stop()
 
@@ -180,45 +191,35 @@ async def periodic_cleanup_task(storage: S3Storage) -> None:
 
 
 # ----------------- STATS TASK -----------------
-async def periodic_stats_task(
-    monitor: Monitor, clamav: ClamAVScanner, storage: S3Storage
-) -> None:
+async def stats(clamav: ClamAVScanner, storage: S3Storage) -> None:
     """Log statistics periodically."""
 
-    async def _check():
-        try:
-            tags = await storage.async_get_s3_tags("stats/_last_stats", S3_BUCKET)
-            return tags.get("status") == "ASKED"
-        except Exception:
-            return False
+    metadata = {"lock-id": "clamav-scan-ignore"}
 
-    while True:
-        try:
-            if await _check():
-                metadata = {"lock-id": "clamav-scan-ignore"}
-                if logger.isEnabledFor(logging.DEBUG):
-                    r = await clamav.async_stats()
-                    logger.info(f"[task-stats] ClamAV stats: {r}")
+    try:
+        if logger.isEnabledFor(logging.DEBUG):
+            r = await clamav.async_stats()
+            logger.info(f"[task-stats] ClamAV stats: {r}")
 
-                await storage.astnc_create_s3_file(
-                    "stats/monitor_stats.json",
-                    S3_BUCKET,
-                    metadata,
-                    json.dumps(monitor.statistics).encode("utf-8"),
-                )
+        await storage.astnc_create_s3_file(
+            "stats/monitor_stats.json",
+            S3_BUCKET,
+            metadata,
+            json.dumps(clamav.monitor.statistics).encode("utf-8"),
+        )
 
-                await storage.astnc_create_s3_file(
-                    "stats/clamav_counters.json",
-                    S3_BUCKET,
-                    metadata,
-                    json.dumps(clamav.statistics).encode("utf-8"),
-                )
-                await storage.async_set_s3_tags(
-                    "stats/_last_stats", S3_BUCKET, {"status": "DONE"}
-                )
-        except Exception as e:
-            logger.exception(f"[task-stats] Stats task error: {e}")
-        await asyncio.sleep(0.5)
+        await storage.astnc_create_s3_file(
+            "stats/clamav_counters.json",
+            S3_BUCKET,
+            metadata,
+            json.dumps(clamav.statistics).encode("utf-8"),
+        )
+
+        tags = S3Tags.from_dict({"status": "DONE"})
+        await storage.async_set_s3_tags("stats/_last_stats", S3_BUCKET, tags)
+
+    except Exception:
+        logger.error("[task-stats] Stats task error", exc_info=True)
 
 
 # ----------------- MAIN -----------------
@@ -230,7 +231,6 @@ async def main():
 
     asyncio.create_task(monitor.reset_host_failures_periodically())
     asyncio.create_task(periodic_cleanup_task(storage))
-    asyncio.create_task(periodic_stats_task(monitor, clamav, storage))
 
     consumer_task = asyncio.create_task(consume_loop(storage, clamav))
 

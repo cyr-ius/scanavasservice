@@ -8,7 +8,7 @@ from .exceptions import (
     S3TaggingException,
     S3UnlockException,
 )
-from .models import ScanResultTags
+from .models import S3Tags
 from .s3 import S3Storage
 
 __all__ = [
@@ -21,5 +21,5 @@ __all__ = [
     "S3MoveException",
     "S3TaggingException",
     "S3UnlockException",
-    "ScanResultTags",
+    "S3Tags",
 ]
