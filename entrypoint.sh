@@ -69,7 +69,7 @@ echo ""
 
 # --- Start FastAPI in background ---
 echo "[1/2] Starting FastAPI on port ${FASTAPI_PORT}..."
-uvicorn app.api.main:app --host 0.0.0.0 --port "${FASTAPI_PORT}" &
+uvicorn app.api:app --host 0.0.0.0 --port "${FASTAPI_PORT}" &
 FASTAPI_PID=$!
 
 # Wait for FastAPI to be ready
@@ -88,4 +88,4 @@ echo "✓ FastAPI ready on port ${FASTAPI_PORT}"
 echo "[2/2] Starting scanner worker..."
 echo ""
 
-exec python -m app.runtime
+exec python -m app
