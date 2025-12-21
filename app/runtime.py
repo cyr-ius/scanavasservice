@@ -8,11 +8,10 @@ from typing import Any
 
 from aiohttp import ClientSession
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from clamav import (
-    ClamAVResult,
-    ClamAVScanner,
-)
-from const import (
+
+from .clamav import ClamAVResult, ClamAVScanner
+from .clamav.monitor import Monitor
+from .const import (
     CLAMD_HOSTS,
     DELAY,
     KAFKA_LOG_RETENTION_MS,
@@ -28,12 +27,11 @@ from const import (
     S3_SCAN_RESULT,
     S3_SECRET_KEY,
 )
-from helpers import retry
-from models import ScanResponse
-from monitor import Monitor
-from mylogging import mylogging
-from storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
-from utils import kafka_params
+from .helpers import retry
+from .models import ScanResponse
+from .mylogging import mylogging
+from .storage import S3BucketKeyException, S3LockException, S3MoveException, S3Storage
+from .utils import kafka_params
 
 logger = mylogging.getLogger("scanav")
 
@@ -105,9 +103,7 @@ async def worker(
             scan = await storage.async_scan_s3_object(key, bucket, clamav)
         except Exception as e:
             logger.error(f"[worker-{worker_id}] {e}")
-            scan = ClamAVResult(
-                key=key, bucket=bucket, status="ERROR", infos=e.__class__.__name__
-            )
+            scan = ClamAVResult(status="ERROR", infos=e.__class__.__name__)
 
         duration = time.monotonic() - start_time
 
@@ -117,7 +113,9 @@ async def worker(
             if scan.status in ["CLEAN", "ERROR"]
             else f"{S3_SCAN_QUARANTINE}/{key}"
         )
-        result = ScanResponse(duration=duration, **scan.model_dump())
+        result = ScanResponse(
+            key=key, bucket=bucket, duration=duration, **scan.model_dump()
+        )
         await storage.async_move_s3_object(key, bucket, target, result)
 
         # Fire webhook if present

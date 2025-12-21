@@ -1,6 +1,6 @@
 import logging
 
-from const import LIB_LOG_LEVEL, LOG_LEVEL
+from .const import LIB_LOG_LEVEL, LOG_LEVEL
 
 
 class Mylogger:

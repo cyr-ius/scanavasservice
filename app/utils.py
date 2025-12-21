@@ -4,7 +4,7 @@ import logging
 import ssl
 from typing import Any
 
-from const import (
+from .const import (
     KAFKA_SASL_MECHANISM,
     KAFKA_SASL_PASSWORD,
     KAFKA_SASL_USERNAME,

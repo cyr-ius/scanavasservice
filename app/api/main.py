@@ -1,12 +1,27 @@
 # main.py
 import asyncio
 import json
+import unicodedata
 import uuid
-from typing import Literal
+from datetime import timedelta
+from typing import Annotated, Literal
 
-from const import (
+from fastapi import (
+    APIRouter,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.params import Depends
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, HttpUrl, ValidationError
+
+from ..const import (
     CLIENT_ID,
-    CLIENT_SCOPES,
     CLIENT_SECRET,
     S3_ACCESS_KEY,
     S3_BUCKET,
@@ -16,18 +31,18 @@ from const import (
     S3_SECRET_KEY,
     VERSION,
 )
-from depends import protected
-from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile, status
-from fastapi.params import Depends
-from fastapi.responses import JSONResponse, StreamingResponse
-from helpers import normalize_ascii
-from models import BucketResponse, ErrorResponse, ScanResponse
-from mylogging import mylogging
-from pydantic import HttpUrl, ValidationError
-from storage import S3Storage
+from ..models import BucketResponse, ScanResponse
+from ..mylogging import mylogging
+from ..storage import S3Storage
+from .depends import ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, protected
 
 logger = mylogging.getLogger("api")
 storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+    code: int
 
 
 app = FastAPI(
@@ -35,12 +50,6 @@ app = FastAPI(
     description="This API allows you to submit a file to a ClamAV antivirus engine and retrieve the result.",
     root_path="/api",
     version=VERSION,
-    swagger_ui_init_oauth={
-        "clientId": CLIENT_ID,
-        "clientSecret": CLIENT_SECRET,
-        "scopes": CLIENT_SCOPES,
-        "usePkceWithAuthorizationCodeGrant": False,
-    },
 )
 
 
@@ -50,33 +59,70 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
     return JSONResponse(status_code=422, content={"status": 422, "detail": detail})
 
 
-v1_router = APIRouter(prefix="/v1")
+@app.post("/token", include_in_schema=False)
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    if form_data.username != CLIENT_ID or form_data.password != CLIENT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": form_data.username}, expires_delta=access_token_expires
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+async def hearbeat():
+    """Hearbeat url."""
+    pass
+
+
+v1_router = APIRouter(prefix="/v1", dependencies=[Depends(protected)])
+
+responses = {
+    422: {"model": ErrorResponse, "description": "Validation Error"},
+    503: {"model": ErrorResponse, "description": "Service Unavailable"},
+}
 
 
 @v1_router.post(
     "/upload",
-    dependencies=[Depends(protected)],
     responses={
+        **responses,
         400: {"model": ErrorResponse, "description": "Bad Request"},
-        422: {"model": ErrorResponse, "description": "Validation Error"},
-        503: {"model": ErrorResponse, "description": "Service Unavailable"},
     },
 )
 async def upload_file_to_scan(
-    file: UploadFile, webhook: HttpUrl | None = None
+    file: UploadFile,
+    scan_notification: HttpUrl | None = Query(
+        None, alias="scan-notification", description="Webhook  url", max_length=128
+    ),
 ) -> ScanResponse:
-    """Upload file to S3 and send scan request to Kafka."""
+    """Upload file to scan."""
     key = str(uuid.uuid4())
     data = await file.read()
-    if webhook and len(webhook) > 128:
+
+    def normalize_ascii(value: str) -> str:
+        return (
+            unicodedata.normalize("NFKD", value)
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
+
+    if scan_notification and len(scan_notification) > 128:
         raise HTTPException(
             status_code=503, detail="Webhook url: length exceeded (max: 128)"
         )
     try:
         if filename := file.filename:
             metadata = {"OriginalFilename": normalize_ascii(filename)}
-            if webhook:
-                metadata = {**metadata, "Webhook": str(webhook)}
+            if scan_notification:
+                metadata = {**metadata, "Webhook": str(scan_notification)}
             await storage.astnc_create_s3_file(key, S3_BUCKET, metadata, data)
         else:
             raise HTTPException(
@@ -93,14 +139,13 @@ async def upload_file_to_scan(
     return ScanResponse(
         key=key,
         bucket=S3_BUCKET,
-        webhook=str(webhook) if webhook else None,
+        webhook=str(scan_notification) if scan_notification else None,
         originalfilename=file.filename,
     )
 
 
 @v1_router.get(
     "/download/{key}",
-    dependencies=[Depends(protected)],
     responses={
         200: {
             "description": "File downloaded successfully",
@@ -109,8 +154,7 @@ async def upload_file_to_scan(
         208: {"model": ErrorResponse, "description": "File is pending scan"},
         402: {"model": ErrorResponse, "description": "File not clean"},
         404: {"model": ErrorResponse, "description": "File not found"},
-        422: {"model": ErrorResponse, "description": "Validation Error"},
-        503: {"model": ErrorResponse, "description": "Storage Unavailable"},
+        **responses,
     },
 )
 async def download_scanned_file(key: str, force: bool = False) -> StreamingResponse:
@@ -146,11 +190,9 @@ async def download_scanned_file(key: str, force: bool = False) -> StreamingRespo
 
 @v1_router.get(
     "/status/{key}",
-    dependencies=[Depends(protected)],
     responses={
         404: {"model": ErrorResponse, "description": "File not found"},
-        422: {"model": ErrorResponse, "description": "Validation Error"},
-        503: {"model": ErrorResponse, "description": "Storage Unavailable"},
+        **responses,
     },
 )
 async def scan_status(key: str) -> ScanResponse:
@@ -179,13 +221,7 @@ async def scan_status(key: str) -> ScanResponse:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
 
-@v1_router.get("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
-async def hearbeat():
-    """Hearbeat url."""
-    pass
-
-
-@v1_router.get("/monitor/{type}", dependencies=[Depends(protected)])
+@v1_router.get("/monitor/{type}")
 async def clamav_monitor(
     type: Literal["clamav", "bucket"],
 ) -> dict | list[BucketResponse] | None:
@@ -202,6 +238,14 @@ async def clamav_monitor(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Monitor error ({e})",
         )
+
+
+@app.webhooks.post("scan-notification")
+async def scan_notification(body: ScanResponse):
+    """
+    When a new user subscribes to your service we'll send you a POST request with this
+    data to the URL that you register for the event `scan-notification`.
+    """
 
 
 async def _get_last_stats_message() -> dict | None:

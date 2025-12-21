@@ -5,45 +5,23 @@ import time
 from typing import Any
 
 from aiobotocore.session import ClientCreatorContext, get_session
-from clamav import ClamAVScanner, ClamAVSendException
-from const import DELAY, RETRY
-from helpers import retry
-from models import BucketResponse, ClamAVResult, ScanResponse
-from mylogging import mylogging
+
+from ..clamav import ClamAVScanner, ClamAVSendException
+from ..clamav.models import ClamAVResult
+from ..const import DELAY, RETRY
+from ..helpers import retry
+from ..models import BucketResponse, ScanResponse
+from ..mylogging import mylogging
+from .exceptions import (
+    S3BucketKeyException,
+    S3GetObjectException,
+    S3LockException,
+    S3MoveException,
+    S3StorageException,
+    S3TaggingException,
+)
 
 logger = mylogging.getLogger("storage")
-
-
-class S3StorageException(Exception):
-    """Storage exception."""
-
-
-class S3GetObjectException(S3StorageException):
-    """S3 get object errors."""
-
-
-class S3MoveException(S3StorageException):
-    """S3 move errors."""
-
-
-class S3TaggingException(S3StorageException):
-    """S3 tagging errors."""
-
-
-class S3LockException(S3StorageException):
-    """S3 lock errors."""
-
-
-class S3UnlockException(S3StorageException):
-    """S3 unlock errors."""
-
-
-class S3MetadataException(S3StorageException):
-    """S3 metadata errors."""
-
-
-class S3BucketKeyException(S3StorageException):
-    """S3 bucket/key errors."""
 
 
 class S3Storage:
@@ -83,12 +61,12 @@ class S3Storage:
                 await s3_client.delete_object(Bucket=bucket, Key=key)
                 # Set tags
                 tags = {
-                    "timestamp": str(result.timestamp),
-                    "duration": round(result.duration, 3) if result.duration else None,
                     "status": result.status,
+                    "timestamp": str(result.timestamp),
+                    "duration": result.duration,
+                    "instance": result.instance,
                     "infos": result.infos,
                     "analyse": result.analyse,
-                    "instance": result.instance,
                 }
                 await self.async_set_s3_tags(target, bucket, tags)
 

@@ -1,40 +1,19 @@
 import asyncio
 import time
 
-from const import CLAMD_CHUNK_SIZE, CLAMD_CNX_TIMEOUT, CLAMD_HOSTS
-from models import ClamAVResult, ClamAVStatsResponse
-from monitor import Monitor
-from mylogging import mylogging
+from ..const import CLAMD_CHUNK_SIZE, CLAMD_CNX_TIMEOUT, CLAMD_HOSTS
+from ..mylogging import mylogging
+from .exceptions import (
+    ClamAVConnectException,
+    ClamAVResponseException,
+    ClamAVSendException,
+    ClamAVSizeExceeded,
+    ClamAVTimeoutException,
+)
+from .models import ClamAVResult, ClamAVStatsResponse
+from .monitor import Monitor
 
 logger = mylogging.getLogger("clamav")
-
-
-class ClamAVException(Exception):
-    """Base ClamAV Exception."""
-
-
-class ClamAVConnectException(ClamAVException):
-    """Error while connecting to clamd."""
-
-
-class ClamAVSizeExceeded(ClamAVException):
-    """File size exceeded exception."""
-
-
-class ClamAVNoStatusException(ClamAVException):
-    """No status received from clamd."""
-
-
-class ClamAVSendException(ClamAVException):
-    """Error while sending data to clamd."""
-
-
-class ClamAVTimeoutException(ClamAVException):
-    """Timeout Exception"""
-
-
-class ClamAVResponseException(ClamAVException):
-    """Error while receiving response from clamd."""
 
 
 class ClamAVScanner:
@@ -155,8 +134,6 @@ class ClamAVScanner:
             if "OK" in response:
                 self._statistics["cleaned"] += 1
                 return ClamAVResult(
-                    key=key,
-                    bucket=bucket,
                     status="CLEAN",
                     instance=f"{host}:{port}",
                     analyse=round(elapsed, 3),
@@ -166,8 +143,6 @@ class ClamAVScanner:
                 self._statistics["infected"] += 1
                 infos = response.split("FOUND")[0].split(":")[-1].strip()
                 return ClamAVResult(
-                    key=key,
-                    bucket=bucket,
                     status="INFECTED",
                     infos=infos,
                     instance=f"{host}:{port}",
@@ -176,8 +151,6 @@ class ClamAVScanner:
 
             self._statistics["errors"] += 1
             return ClamAVResult(
-                key=key,
-                bucket=bucket,
                 status="ERROR",
                 infos="Not response",
                 analyse=0,

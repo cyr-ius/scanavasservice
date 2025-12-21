@@ -17,7 +17,7 @@
             "name": "Execute - Runtime",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/app/runtime.py",
+            "module": "app.runtime",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env",
             "justMyCode": true
@@ -28,14 +28,13 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "main:app",
+                "app.api.main:app",
                 "--host",
                 "0.0.0.0",
                 "--reload",
                 "--log-level",
                 "debug"
             ],
-            "cwd": "${workspaceFolder}/app",
             "envFile": "${workspaceFolder}/.env"
         },
     ]

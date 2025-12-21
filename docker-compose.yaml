@@ -97,7 +97,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "curl -sSf http://localhost:8000/api/v1/heartbeat >/dev/null || exit 1",
+          "curl -sSf http://localhost:8000/api/heartbeat >/dev/null || exit 1",
         ]
       interval: 10s
       timeout: 5s

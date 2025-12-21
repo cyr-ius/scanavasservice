@@ -1,15 +1,16 @@
 import asyncio
 import time
 
-from const import (
+from pydantic import BaseModel
+
+from ..const import (
     BUSY_WEIGHT,
     COOLDOWN_SECONDS,
     COOLDOWN_THRESHOLD,
     EMA_ALPHA,
     FAILURE_WEIGHT,
 )
-from mylogging import mylogging
-from pydantic import BaseModel
+from ..mylogging import mylogging
 
 logger = mylogging.getLogger("monitor")
 

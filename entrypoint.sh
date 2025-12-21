@@ -16,17 +16,14 @@ else
   : "${CLAMD_PORT:=3310}"
 fi
 
-# S3 endpoint: prefer S3_ENDPOINT_URL (docker-compose), keep default if missing
 : "${S3_ENDPOINT_URL:=${S3_ENDPOINT_URL:-http://minio:9000}}"
-
-# Kafka: prefer KAFKA_SERVERS (common name used in docker-compose)
 : "${KAFKA_SERVERS:=${KAFKA_SERVERS:-kafka:9092}}"
-
-# FASTAPI port and general timeout
 : "${FASTAPI_PORT:=${FASTAPI_PORT:-8000}}"
 : "${STARTUP_WAIT_SECS:=${STARTUP_WAIT_SECS:-120}}"
 
 echo "Waiting up to ${STARTUP_WAIT_SECS}s for dependencies..."
+echo "WORKDIR: $(pwd)"
+echo "Python: $(python --version)"
 
 end=$((SECONDS + STARTUP_WAIT_SECS))
 
@@ -66,13 +63,17 @@ until nc -z "${KAFKA_HOST}" "${KAFKA_PORT}" >/dev/null 2>&1; do
 done
 echo "Kafka reachable (${KAFKA_HOST}:${KAFKA_PORT})."
 
+echo ""
+echo "All dependencies ready. Starting services..."
+echo ""
+
 # --- Start FastAPI in background ---
-echo "Starting FastAPI on port ${FASTAPI_PORT}..."
-uvicorn main:app --host 0.0.0.0 --port "${FASTAPI_PORT}" &
+echo "[1/2] Starting FastAPI on port ${FASTAPI_PORT}..."
+uvicorn app.api.main:app --host 0.0.0.0 --port "${FASTAPI_PORT}" &
 FASTAPI_PID=$!
 
 # Wait for FastAPI to be ready
-until curl -sSf "http://127.0.0.1:${FASTAPI_PORT}/api/v1/heartbeat" >/dev/null 2>&1; do
+until curl -sSf "http://127.0.0.1:${FASTAPI_PORT}/api/heartbeat" >/dev/null 2>&1; do
   if (( SECONDS >= end )); then
     echo "Timeout waiting for FastAPI"
     kill "${FASTAPI_PID}" || true
@@ -81,8 +82,10 @@ until curl -sSf "http://127.0.0.1:${FASTAPI_PORT}/api/v1/heartbeat" >/dev/null 2
   echo "Waiting for FastAPI to start..."
   sleep 2
 done
-echo "FastAPI ready."
+echo "✓ FastAPI ready on port ${FASTAPI_PORT}"
 
 # --- Start scanner worker ---
-echo "Starting scanner worker..."
-exec python /app/runtime.py
+echo "[2/2] Starting scanner worker..."
+echo ""
+
+exec python -m app.runtime

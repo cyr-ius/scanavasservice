@@ -2,7 +2,7 @@
 
 import os
 
-from helpers import parse_hosts
+from .helpers import parse_hosts
 
 # General configuration
 LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
@@ -61,4 +61,4 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
 CLIENT_SCOPES = os.getenv("CLIENT_SCOPES", "openid,profile,email,groups").split(",")
 
 # Application version
-VERSION = os.getenv("APP_VERSION", "unknown")
+VERSION = os.getenv("VERSION", "0.0.0")

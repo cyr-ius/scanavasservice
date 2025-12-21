@@ -4,17 +4,10 @@ import asyncio
 import functools
 import logging
 import random
-import unicodedata
 from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-def normalize_ascii(value: str) -> str:
-    return (
-        unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
-    )
 
 
 def parse_hosts(s: str, port: int = 3310) -> list[tuple[str, int]]:
