@@ -9,6 +9,9 @@ LIB_LOG_LEVEL = os.getenv("LIB_LOG_LEVEL", "WARNING").upper()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_CONCURRENT_SCANS = int(os.getenv("MAX_CONCURRENT_SCANS", 10))
 RESULT_TO_KAFKA_TOPIC = os.getenv("RESULT_TO_KAFKA_TOPIC", "false").lower() == "true"
+SECRET_KEY = os.getenv("SECRET_KEY", "secret")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
 
 # Scan retry configuration

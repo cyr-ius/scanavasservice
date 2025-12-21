@@ -21,6 +21,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, HttpUrl, ValidationError
 
 from ..const import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
     CLIENT_ID,
     CLIENT_SECRET,
     S3_ACCESS_KEY,
@@ -34,7 +35,7 @@ from ..const import (
 from ..logging import getLogger
 from ..models import BucketResponse, ScanResponse
 from ..storage import S3Storage, S3Tags
-from .depends import ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token, protected
+from .depends import create_access_token, protected
 
 logger = getLogger("api")
 storage = S3Storage(S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY)
